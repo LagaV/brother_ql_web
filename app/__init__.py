@@ -7,9 +7,12 @@ This is a web service to print labels on Brother QL label printers.
 
 import sys
 import random
+import argparse
 
 from flask import Flask
 from flask_bootstrap import Bootstrap
+
+from brother_ql.devicedependent import models
 
 from . import fonts
 from config import Config
@@ -46,6 +49,9 @@ def main(app):
 
     FONTS = fonts.Fonts()
     FONTS.scan_global_fonts()
+
+    parse_args(app)
+
     if app.config['FONT_FOLDER']:
         FONTS.scan_fonts_folder(app.config['FONT_FOLDER'])
 
@@ -67,3 +73,38 @@ def main(app):
         app.config['LABEL_DEFAULT_FONT_STYLE'] = style
         app.logger.warn(
             'The default font is now set to: {} ({})\n'.format(family, style))
+
+
+def parse_args(app):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--font-folder', default=False,
+                        help='folder for additional .ttf/.otf fonts')
+    parser.add_argument('--default-label-size', default=False,
+                        help='Label size inserted in your printer. Defaults to 62.')
+    parser.add_argument('--default-orientation', default=False, choices=('standard', 'rotated'),
+                        help='Label orientation, defaults to "standard". To turn your text by 90°, state "rotated".')
+    parser.add_argument('--model', default=False, choices=models,
+                        help='The model of your printer (default: QL-500)')
+    parser.add_argument('printer',  nargs='?', default=False,
+                        help='String descriptor for the printer to use (like tcp://192.168.0.23:9100 or file:///dev/usb/lp0)')
+    args = parser.parse_args()
+
+    if args.printer:
+        app.config.update(
+            PRINTER_PRINTER=args.printer
+        )
+
+    if args.model:
+        app.config.update(
+            PRINTER_MODEL=args.model
+        )
+
+    if args.default_label_size:
+        app.config.update(
+            LABEL_DEFAULT_SIZE=args.default_label_size
+        )
+
+    if args.default_orientation:
+        app.config.update(
+            LABEL_DEFAULT_ORIENTATION=args.default_orientation
+        )
