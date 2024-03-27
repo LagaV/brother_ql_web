@@ -32,22 +32,9 @@ For now I have added Docker support and the ability to print red images on suppo
 -   Print images on red/black paper
 -   Dockerized
 
-### Installation
-
 ### Run via Docker
 
-To build the image:
-
-```bash
-git clone https://github.com/tbnobody/brother_ql_web.git
-cd brother_ql_web
-docker buildx build -t brother-ql-web .
-
-# alternatively, if buildx is not available
-docker build -t brother-ql-web .
-```
-
-You can then start your newly build image with `docker run`.
+You can pull the image from `davidramiro/brother-ql-web` on Docker Hub.
 You have to pass your printer model as `--model` argument. At the end of the arguments you have to add your device socket (linux kernel backend), USB identifier (pyusb backend) or network address (TCP).
 Please note you might have to pass your device to the container via the `--device` flag.
 
@@ -59,10 +46,21 @@ docker run -d \
     --name=brother-ql-web \
     -p 8013:8013 \
     --device=/dev/usb/lp0 \
-    brother-ql-web:latest \
+    davidramiro/brother-ql-web:latest \
     --default-label-size 62 \
     --model QL-800 \
     file:///dev/usb/lp0
+```
+
+To build the image locally:
+
+```bash
+git clone https://github.com/davidramiro/brother_ql_web.git
+cd brother_ql_web
+docker buildx build -t brother-ql-web .
+
+# alternatively, if buildx is not available
+docker build -t brother-ql-web .
 ```
 
 ### Usage
