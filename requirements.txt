@@ -1,4 +1,4 @@
-brother_ql
+brother_ql-inventree
 Flask
 flask_bootstrap4
 qrcode
