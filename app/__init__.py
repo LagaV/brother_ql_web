@@ -77,8 +77,6 @@ def main(app):
 
 def parse_args(app):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--font-folder', default=False,
-                        help='folder for additional .ttf/.otf fonts')
     parser.add_argument('--default-label-size', default=False,
                         help='Label size inserted in your printer. Defaults to 62.')
     parser.add_argument('--default-orientation', default=False, choices=('standard', 'rotated'),
