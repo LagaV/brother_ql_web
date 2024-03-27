@@ -6,7 +6,7 @@ from brother_ql.devicedependent import label_type_specs, label_sizes, two_color_
 from brother_ql.devicedependent import ENDLESS_LABEL, DIE_CUT_LABEL, ROUND_DIE_CUT_LABEL
 
 from . import bp
-from app.utils import convert_image_to_bw, convert_image_to_grayscale, pdffile_to_image, imgfile_to_image, image_to_png_bytes
+from app.utils import convert_image_to_bw, convert_image_to_grayscale, convert_image_to_red_and_black, pdffile_to_image, imgfile_to_image, image_to_png_bytes
 from app import FONTS
 
 from .label import SimpleLabel, LabelContent, LabelOrientation, LabelType
@@ -171,6 +171,10 @@ def create_label_from_request(request):
                 image = imgfile_to_image(image)
                 if context['image_mode'] == 'grayscale':
                     return convert_image_to_grayscale(image)
+                elif context['image_mode'] == 'red_and_black':
+                    return convert_image_to_red_and_black(image)
+                elif context['image_mode'] == 'colored':
+                    return image
                 else:
                     return convert_image_to_bw(image, context['image_bw_threshold'])
             elif ext.lower() in ('.pdf'):
@@ -192,6 +196,10 @@ def create_label_from_request(request):
         label_content = LabelContent.TEXT_QRCODE
     elif context['image_mode'] == 'grayscale':
         label_content = LabelContent.IMAGE_GRAYSCALE
+    elif context['image_mode'] == 'red_black':
+        label_content = LabelContent.IMAGE_RED_BLACK
+    elif context['image_mode'] == 'colored':
+        label_content = LabelContent.IMAGE_COLORED
     else:
         label_content = LabelContent.IMAGE_BW
 

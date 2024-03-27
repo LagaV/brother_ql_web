@@ -67,10 +67,10 @@ class PrinterQueue:
 
             img = queue_entry['label'].generate()
 
-            if queue_entry['label'].label_content == LabelContent.IMAGE_GRAYSCALE: 
-                dither = True
-            else:
+            if queue_entry['label'].label_content == LabelContent.IMAGE_BW: 
                 dither = False
+            else:
+                dither = True
 
             create_label(
                 qlr,

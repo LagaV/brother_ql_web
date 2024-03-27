@@ -9,6 +9,8 @@ class LabelContent(Enum):
     TEXT_QRCODE = auto()
     IMAGE_BW = auto()
     IMAGE_GRAYSCALE = auto()
+    IMAGE_RED_BLACK = auto()
+    IMAGE_COLORED = auto()
 
 
 class LabelOrientation(Enum):
@@ -116,7 +118,7 @@ class SimpleLabel:
     def generate(self):
         if self._label_content in (LabelContent.QRCODE_ONLY, LabelContent.TEXT_QRCODE):
             img = self._generate_qr()
-        elif self._label_content in (LabelContent.IMAGE_BW, LabelContent.IMAGE_GRAYSCALE):
+        elif self._label_content in (LabelContent.IMAGE_BW, LabelContent.IMAGE_GRAYSCALE, LabelContent.IMAGE_RED_BLACK, LabelContent.IMAGE_COLORED):
             img = self._image
         else:
             img = None

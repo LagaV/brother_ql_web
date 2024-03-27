@@ -78,9 +78,13 @@ function preview() {
     if ($('#labelSize option:selected').val().includes('red')) {
         $('#print_color_black').removeClass('disabled');
         $('#print_color_red').removeClass('disabled');
+        $('#image_mode_red_and_black').removeClass('disabled');
+        $('#image_mode_colored').removeClass('disabled');
     } else {
         $('#print_color_black').addClass('disabled').prop('active', true);
         $('#print_color_red').addClass('disabled');
+        $('#image_mode_red_and_black').addClass('disabled');
+        $('#image_mode_colored').addClass('disabled');
     }
     {% endif %}
 

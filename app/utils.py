@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 
 from PIL import Image
+from PIL.ImageOps import colorize
 from io import BytesIO
 from pdf2image import convert_from_bytes
 
@@ -12,6 +13,9 @@ def convert_image_to_bw(image, threshold):
 def convert_image_to_grayscale(image):
     fn = lambda x : 255 if x > threshold else 0
     return image.convert('L') # convert to greyscale
+
+def convert_image_to_red_and_black(image):
+    return colorize(image.convert('L'), black='black', white='white', mid='red')
 
 
 def imgfile_to_image(file):

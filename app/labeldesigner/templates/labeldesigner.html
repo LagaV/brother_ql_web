@@ -129,16 +129,26 @@
                     <div id="collapse5" class="collapse" aria-labelledby="heading5" data-parent="#accordion">
                         <div class="card-body">
                             <label for="imageMode" class="control-label input-group" style="margin-top: 10px; margin-bottom: 0">Image mode:</label>
-                            <div class="btn-group btn-group-toggle btn-block" data-toggle="buttons">
-                                <label class="btn btn-secondary {% if default_image_mode == 'black_and_white' %}active{% endif %}" id="image_mode_bw">
-                                    <input type="radio" name="imageMode" onchange="preview()" value="black_and_white" aria-label="Black & White" {% if default_image_mode == 'black_and_white' %}checked{% endif %}>
-                                    <span class="fas fa-ruler-horizontal" aria-hidden="true"> Black & White
-                                </label>
-                                <label class="btn btn-secondary {% if default_image_mode == 'grayscale' %}active{% endif %}" id="image_mode_grayscale">
-                                    <input type="radio" name="imageMode" onchange="preview()" value="grayscale" aria-label="Grayscale" {% if default_image_mode == 'grayscale' %}checked{% endif %}>
-                                    <span class="fas fa-ruler-vertical" aria-hidden="true"> Grayscale
-                                </label>
-                            </div>
+
+                            <label class="btn btn-secondary {% if default_image_mode == 'black_and_white' %}active{% endif %}" id="image_mode_bw">
+                                <input type="radio" name="imageMode" onchange="preview()" value="black_and_white" aria-label="Black & White" {% if default_image_mode == 'black_and_white' %}checked{% endif %}>
+                                <span class="fas fa-ruler-horizontal" aria-hidden="true"> Black & White
+                            </label>
+                            <label class="btn btn-secondary {% if default_image_mode == 'grayscale' %}active{% endif %}" id="image_mode_grayscale">
+                                <input type="radio" name="imageMode" onchange="preview()" value="grayscale" aria-label="Grayscale" {% if default_image_mode == 'grayscale' %}checked{% endif %}>
+                                <span class="fas fa-ruler-vertical" aria-hidden="true"> Grayscale
+                            </label>
+                            {% if red_support %}
+                            <label class="btn btn-secondary {% if default_image_mode == 'colored' %}active{% endif %}" id="image_mode_colored">
+                                <input type="radio" name="imageMode" onchange="preview()" value="colored" aria-label="Colored" {% if default_image_mode == 'colored' %}checked{% endif %}>
+                                <span class="fas fa-ruler-horizontal" aria-hidden="true"> Colored
+                            </label>
+                            <label class="btn btn-secondary {% if default_image_mode == 'red_and_black' %}active{% endif %}" id="image_mode_red_and_black">
+                                <input type="radio" name="imageMode" onchange="preview()" value="red_and_black" aria-label="Red & Black" {% if default_image_mode == 'red_and_black' %}checked{% endif %}>
+                                <span class="fas fa-ruler-vertical" aria-hidden="true"> Red & Black
+                            </label>
+                            {% endif %}
+                               
 
                             <label for="imageBwThreshold" style="margin-top: 10px; margin-bottom: 0">Black & White threshold:</label>
                             <input id="imageBwThreshold" class="form-control" type="number" min="1" max="255" value="{{default_bw_threshold}}" onChange="preview()">
