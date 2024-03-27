@@ -1,13 +1,19 @@
-## brother_ql_web
+# brother_ql_web
 
 This is a web service to print labels on Brother QL label printers.
 
 You need Python 3 or Docker for this software to work.
 
-![Screenshot](./screenshots/Label-Designer_Desktop.png)
-
 The web interface is [responsive](https://en.wikipedia.org/wiki/Responsive_web_design).
 There's also a screenshot showing [how it looks on a smartphone](./screenshots/Label-Designer_Phone.png)
+
+## Fork info
+
+There are a lot of forks of the `brother_ql` and `brother_ql_web` repos from [pklaus](https://github.com/pklaus/brother_ql). I tried to cherry pick a fairly recent and well maintainable state by using [matmair/brother_ql-inventree](https://github.com/matmair/brother_ql-inventree) as a dependency for communicating with the printers and [tbnobody/brother_ql_web](https://github.com/tbnobody/brother_ql_web) as a base for the frontend as there have been a few fixes and improvements implemented over there.
+
+For now I have added Docker support and the ability to print red images on supported paper/printers.
+
+![Screenshot](./screenshots/Label-Designer_Desktop.png)
 
 ### Additional Features
 
@@ -23,58 +29,10 @@ There's also a screenshot showing [how it looks on a smartphone](./screenshots/L
     -   Cut only after the last label
 -   Migrated GUI to Bootstrap 4
 -   Make preview for round labels.. round
+-   Print images on red/black paper
+-   Dockerized
 
 ### Installation
-
-This installation manual requires only a default installation of Debian 10 (Buster).
-Install prerequisites:
-
-    apt install fontconfig python3-venv python3-pip git poppler-utils
-
-Get the code:
-
-    cd /opt
-    git clone https://github.com/tbnobody/brother_ql_web.git
-
-Build the venv and install the requirements:
-
-    cd /opt/brother_ql_web
-    python3 -m venv .venv
-    source /opt/brother_ql_web/.venv/bin/activate
-    pip install -r requirements.txt
-
-#### Configuration file
-
-Create a directory called 'instance', a file called 'application.py' and adjust the values to match your needs.
-
-```bash
-    mkdir /opt/brother_ql_web/instance
-    touch /opt/brother_ql_web/instance/application.py
-```
-
-E.g.
-
-```python
-"""
-User specific application settings
-"""
-import logging
-PRINTER_MODEL = 'QL-820NWB'
-PRINTER_PRINTER = 'tcp://192.168.1.33:9100'
-```
-
-### Startup
-
-To start the server, run `./run.py`.
-
-### Automatic startup using systemd service
-
-Copy service file, reload system, enable and start the service
-
-    cp /opt/brother_ql_web/systemd/brother_ql_web.service /etc/systemd/system
-    systemctl daemon-reload
-    systemctl enable brother_ql_web
-    systemctl start brother_ql_web
 
 ### Run via Docker
 
