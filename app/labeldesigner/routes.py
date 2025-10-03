@@ -31,10 +31,19 @@ MARKDOWN_DEFAULT_SLICE_WINDOW_MM = 6.0
 MARKDOWN_DEFAULT_MIN_BLANK_RUN = 4
 MARKDOWN_DEFAULT_FOOTER_MM = 4.0
 MARKDOWN_DEFAULT_PAGE_NUMBER_MM = 4.0
+MARKDOWN_DEFAULT_SLICE_MM = 90.0
 
 
-def fetch_label_dimensions(label_size):
-    dims = label_type_specs[label_size]['dots_printable']
+def get_label_spec(label_size):
+    try:
+        return label_type_specs[label_size]
+    except KeyError as exc:
+        raise LookupError("Unknown label_size") from exc
+
+
+def get_label_dimensions(label_size):
+    spec = get_label_spec(label_size)
+    dims = spec['dots_printable']
     return dims[0], dims[1]
 
 
@@ -46,30 +55,52 @@ def mm_to_pixels(mm_value, dpi):
     return int(round(mm_float / 25.4 * dpi))
 
 
-def slice_markdown_pages(image, slice_mm, footer_mm, dpi):
+def slice_markdown_pages(image, slice_mm, footer_mm, dpi, forced_breaks_px: Optional[List[int]] = None):
     footer_px = mm_to_pixels(footer_mm, dpi)
-
-    if slice_mm <= 0:
-        if footer_px > 0:
-            canvas = Image.new('RGB', (image.width, image.height + footer_px), 'white')
-            canvas.paste(image, (0, 0))
-            return [canvas]
-        return [image]
-
     window_px = mm_to_pixels(MARKDOWN_DEFAULT_SLICE_WINDOW_MM, dpi)
-    row_blank, row_heavy = compute_row_stats(image, white_threshold=250, max_ink_frac=0.01, downsample_x=4)
 
-    pages = slice_exact_pages(
-        image,
-        slice_mm,
-        dpi,
-        footer_px=footer_px,
-        smart=True,
-        window_px=window_px,
-        min_blank_run=MARKDOWN_DEFAULT_MIN_BLANK_RUN,
-        row_blank=row_blank,
-        row_heavy=row_heavy
-    )
+    def _slice_fragment(fragment: Image.Image) -> List[Image.Image]:
+        if fragment.height <= 0:
+            return []
+
+        if slice_mm <= 0:
+            if footer_px > 0:
+                canvas = Image.new('RGB', (fragment.width, fragment.height + footer_px), 'white')
+                canvas.paste(fragment, (0, 0))
+                return [canvas]
+            return [fragment]
+
+        effective_footer_px = footer_px if footer_px > 0 else 1
+        return slice_exact_pages(
+            fragment,
+            slice_mm,
+            dpi,
+            footer_px=effective_footer_px,
+            smart=True,
+            window_px=window_px,
+            min_blank_run=MARKDOWN_DEFAULT_MIN_BLANK_RUN,
+            row_blank=None,
+            row_heavy=None
+        )
+
+    if not forced_breaks_px:
+        pages = _slice_fragment(image)
+        return pages if pages else [image]
+
+    pages: List[Image.Image] = []
+    start = 0
+    height = image.height
+    for raw_break in sorted(set(forced_breaks_px)):
+        break_y = int(raw_break)
+        if break_y <= start or break_y >= height:
+            continue
+        fragment = image.crop((0, start, image.width, break_y))
+        pages.extend(_slice_fragment(fragment))
+        start = break_y
+
+    if start < height:
+        fragment = image.crop((0, start, image.width, height))
+        pages.extend(_slice_fragment(fragment))
 
     return pages if pages else [image]
 
@@ -472,6 +503,8 @@ def create_printer_queue(label_size):
 def build_label_context_from_request(request):
     d = request.values
     label_size = d.get('label_size', current_app.config['LABEL_DEFAULT_SIZE'])
+    print_type = str(d.get('print_type', 'text')).lower()
+    orientation = str(d.get('orientation', current_app.config['LABEL_DEFAULT_ORIENTATION'])).lower()
 
     def to_float(value, default):
         try:
@@ -485,12 +518,13 @@ def build_label_context_from_request(request):
         except (TypeError, ValueError):
             return int(default)
 
-    width, height = fetch_label_dimensions(label_size)
+    spec = get_label_spec(label_size)
+    width, height = spec['dots_printable']
     context = {
         'label_size': label_size,
-        'print_type': d.get('print_type', 'text'),
-        'label_orientation': d.get('orientation', current_app.config['LABEL_DEFAULT_ORIENTATION']),
-        'kind': label_type_specs[label_size]['kind'],
+        'print_type': print_type,
+        'label_orientation': orientation,
+        'kind': spec['kind'],
         'margin_top_raw': to_float(d.get('margin_top', None), current_app.config['LABEL_DEFAULT_MARGIN_TOP']),
         'margin_bottom_raw': to_float(d.get('margin_bottom', None), current_app.config['LABEL_DEFAULT_MARGIN_BOTTOM']),
         'margin_left_raw': to_float(d.get('margin_left', None), current_app.config['LABEL_DEFAULT_MARGIN_LEFT']),
@@ -515,6 +549,17 @@ def build_label_context_from_request(request):
         'markdown_page_count': int(d.get('markdown_page_count', 1)) == 1,
         'head_width_px': width
     }
+
+    if print_type == 'markdown' and orientation == 'rotated':
+        context['markdown_paged'] = True
+        slice_mm = context['markdown_slice_mm']
+        if slice_mm <= 0:
+            context['markdown_slice_mm'] = MARKDOWN_DEFAULT_SLICE_MM
+    elif print_type == 'markdown':
+        context['markdown_page_numbers'] = False
+        context['markdown_page_count'] = False
+        context['markdown_page_circle'] = False
+
     return context
 
 
@@ -523,6 +568,9 @@ def build_label_context_from_json(data):
     label_size = str(data.get('label_size', cfg['LABEL_DEFAULT_SIZE']))
     orientation = str(data.get('orientation', cfg['LABEL_DEFAULT_ORIENTATION'])).lower()
     text = data.get('markdown', data.get('text', '')) or ''
+
+    spec = get_label_spec(label_size)
+    width, height = spec['dots_printable']
 
     def margin_value(name):
         if f'{name}_mm' in data:
@@ -538,7 +586,7 @@ def build_label_context_from_json(data):
         'label_size': label_size,
         'print_type': 'markdown',
         'label_orientation': orientation,
-        'kind': label_type_specs[label_size]['kind'],
+        'kind': spec['kind'],
         'margin_top_raw': margin_value('top'),
         'margin_bottom_raw': margin_value('bottom'),
         'margin_left_raw': margin_value('left'),
@@ -563,17 +611,20 @@ def build_label_context_from_json(data):
         'markdown_page_count': bool(data.get('page_count', True)),
         'head_width_px': width
     }
+
+    if orientation == 'rotated':
+        context['markdown_paged'] = True
+        if context['markdown_slice_mm'] <= 0:
+            context['markdown_slice_mm'] = MARKDOWN_DEFAULT_SLICE_MM
+    else:
+        context['markdown_page_numbers'] = False
+        context['markdown_page_count'] = False
+        context['markdown_page_circle'] = False
+
     return context
 
 
 def create_label_from_context(context, image_file=None):
-    def get_label_dimensions(label_size):
-        try:
-            ls = label_type_specs[context['label_size']]
-        except KeyError:
-            raise LookupError("Unknown label_size")
-        return ls['dots_printable']
-
     def get_font_info(font_family_name, font_style_name):
         try:
             if font_family_name is None or font_style_name is None:
@@ -581,7 +632,7 @@ def create_label_from_context(context, image_file=None):
                 font_style_name = current_app.config['LABEL_DEFAULT_FONT_STYLE']
             font_path = FONTS.fonts[font_family_name][font_style_name]
         except KeyError:
-            raise LookupError("Couln't find the font & style")
+            raise LookupError("Couldn't find the font & style")
         return font_path, font_family_name, font_style_name
 
     def get_uploaded_image(image):
@@ -591,20 +642,17 @@ def create_label_from_context(context, image_file=None):
                 image = imgfile_to_image(image)
                 if context['image_mode'] == 'grayscale':
                     return convert_image_to_grayscale(image)
-                elif context['image_mode'] == 'red_and_black':
+                if context['image_mode'] == 'red_and_black':
                     return convert_image_to_red_and_black(image)
-                elif context['image_mode'] == 'colored':
+                if context['image_mode'] == 'colored':
                     return image
-                else:
-                    return convert_image_to_bw(image, context['image_bw_threshold'])
-            elif ext.lower() in ('.pdf'):
+                return convert_image_to_bw(image, context['image_bw_threshold'])
+            if ext.lower() == '.pdf':
                 image = pdffile_to_image(image, DEFAULT_DPI)
                 if context['image_mode'] == 'grayscale':
                     return convert_image_to_grayscale(image)
-                else:
-                    return convert_image_to_bw(image, context['image_bw_threshold'])
-            else:
-                return None
+                return convert_image_to_bw(image, context['image_bw_threshold'])
+            return None
         except AttributeError:
             return None
 
@@ -613,12 +661,11 @@ def create_label_from_context(context, image_file=None):
             return None
         if context['image_mode'] == 'grayscale':
             return convert_image_to_grayscale(image)
-        elif context['image_mode'] == 'red_and_black':
+        if context['image_mode'] == 'red_and_black':
             return convert_image_to_red_and_black(image)
-        elif context['image_mode'] == 'colored':
+        if context['image_mode'] == 'colored':
             return image
-        else:
-            return convert_image_to_bw(image, context['image_bw_threshold'])
+        return convert_image_to_bw(image, context['image_bw_threshold'])
 
     def scale_image_to_box(image, max_width, max_height):
         if image is None:
@@ -636,29 +683,50 @@ def create_label_from_context(context, image_file=None):
             return image.resize(new_size, resample=RESAMPLE_LANCZOS)
         return image
 
-    if context['print_type'] == 'text':
+    def points_to_pixels(pt_value):
+        try:
+            pt = float(pt_value)
+        except (TypeError, ValueError):
+            pt = float(current_app.config['LABEL_DEFAULT_FONT_SIZE'])
+        return int(round(pt * DEFAULT_DPI / 72.0))
+
+    def margin_in_pixels(raw_value, default_config_key):
+        if raw_value is None:
+            raw_value = current_app.config[default_config_key]
+        try:
+            mm = float(raw_value) / 10.0
+        except (TypeError, ValueError):
+            fallback = current_app.config[default_config_key]
+            try:
+                mm = float(fallback) / 10.0
+            except (TypeError, ValueError):
+                mm = 0.0
+        return int(round(mm * DEFAULT_DPI / 25.4))
+
+    print_type = str(context.get('print_type', 'text')).lower()
+    if print_type == 'text':
         label_content = LabelContent.TEXT_ONLY
-    elif context['print_type'] == 'qrcode':
+    elif print_type == 'qrcode':
         label_content = LabelContent.QRCODE_ONLY
-    elif context['print_type'] == 'qrcode_text':
+    elif print_type == 'qrcode_text':
         label_content = LabelContent.TEXT_QRCODE
-    elif context['print_type'] == 'markdown':
+    elif print_type == 'markdown':
         label_content = LabelContent.MARKDOWN_IMAGE
-    elif context['image_mode'] == 'grayscale':
-        label_content = LabelContent.IMAGE_GRAYSCALE
-    elif context['image_mode'] == 'red_black':
-        label_content = LabelContent.IMAGE_RED_BLACK
-    elif context['image_mode'] == 'colored':
-        label_content = LabelContent.IMAGE_COLORED
     else:
-        label_content = LabelContent.IMAGE_BW
+        image_mode = str(context.get('image_mode', 'bw')).lower()
+        if image_mode == 'grayscale':
+            label_content = LabelContent.IMAGE_GRAYSCALE
+        elif image_mode == 'red_black':
+            label_content = LabelContent.IMAGE_RED_BLACK
+        elif image_mode == 'colored':
+            label_content = LabelContent.IMAGE_COLORED
+        else:
+            label_content = LabelContent.IMAGE_BW
 
-    if context['label_orientation'] == 'rotated':
-        label_orientation = LabelOrientation.ROTATED
-    else:
-        label_orientation = LabelOrientation.STANDARD
+    orientation_value = str(context.get('label_orientation', 'standard')).lower()
+    label_orientation = LabelOrientation.ROTATED if orientation_value == 'rotated' else LabelOrientation.STANDARD
 
-    kind = context['kind']
+    kind = context.get('kind', ENDLESS_LABEL)
     is_endless = kind == ENDLESS_LABEL
     if is_endless:
         label_type = LabelType.ENDLESS_LABEL
@@ -667,194 +735,83 @@ def create_label_from_context(context, image_file=None):
     else:
         label_type = LabelType.ROUND_DIE_CUT_LABEL
 
-    width, height = get_label_dimensions(context['label_size'])
-    if height > width:
-        width, height = height, width
+    standard_width_px, standard_height_px = get_label_dimensions(context['label_size'])
+    if standard_height_px > standard_width_px:
+        standard_width_px, standard_height_px = standard_height_px, standard_width_px
+
     if label_orientation == LabelOrientation.ROTATED:
-        height, width = width, height
+        label_height_px = max(standard_width_px, 1)
+        label_width_px = standard_height_px if standard_height_px > 0 else standard_width_px
+    else:
+        label_width_px = standard_width_px
+        label_height_px = standard_height_px
 
-    def margin_in_pixels(raw_value):
-        try:
-            mm = float(raw_value) / 10.0
-        except (TypeError, ValueError):
-            mm = 0.0
-        return int(round(mm * DEFAULT_DPI / 25.4))
+    margin_left_px = margin_in_pixels(context.get('margin_left_raw'), 'LABEL_DEFAULT_MARGIN_LEFT')
+    margin_right_px = margin_in_pixels(context.get('margin_right_raw'), 'LABEL_DEFAULT_MARGIN_RIGHT')
+    margin_top_px = margin_in_pixels(context.get('margin_top_raw'), 'LABEL_DEFAULT_MARGIN_TOP')
+    margin_bottom_px = margin_in_pixels(context.get('margin_bottom_raw'), 'LABEL_DEFAULT_MARGIN_BOTTOM')
 
-    margin_left_px = margin_in_pixels(context.get('margin_left_raw', current_app.config['LABEL_DEFAULT_MARGIN_LEFT']))
-    margin_right_px = margin_in_pixels(context.get('margin_right_raw', current_app.config['LABEL_DEFAULT_MARGIN_RIGHT']))
-    margin_top_px = margin_in_pixels(context.get('margin_top_raw', current_app.config['LABEL_DEFAULT_MARGIN_TOP']))
-    margin_bottom_px = margin_in_pixels(context.get('margin_bottom_raw', current_app.config['LABEL_DEFAULT_MARGIN_BOTTOM']))
+    content_width_standard_px = max(standard_width_px - margin_left_px - margin_right_px, 1)
+    content_height_standard_px = max(standard_height_px - margin_top_px - margin_bottom_px, 1)
+
+    if label_orientation == LabelOrientation.STANDARD:
+        content_width_px = content_width_standard_px
+        content_height_limit_px = 0 if is_endless else content_height_standard_px
+    else:
+        if standard_height_px > 0:
+            content_width_px = max(content_height_standard_px, 1)
+        else:
+            content_width_px = content_width_standard_px
+        content_height_limit_px = 0 if is_endless else content_width_standard_px
 
     font_path, resolved_family, resolved_style = get_font_info(context.get('font_family'), context.get('font_style'))
     font_map = FONTS.fonts.get(resolved_family, {})
+    font_size_pt = float(context.get('font_size', current_app.config['LABEL_DEFAULT_FONT_SIZE']))
+    font_size_px = points_to_pixels(font_size_pt)
 
     markdown_page_images = None
-    generated_image = None
-
-    paginate = context.get('markdown_paged', False) and context.get('markdown_slice_mm', 0) > 0
-    slice_mm_config = float(context.get('markdown_slice_mm', 0))
-
-    def get_label_dimensions(label_size):
-        try:
-            ls = label_type_specs[context['label_size']]
-        except KeyError:
-            raise LookupError("Unknown label_size")
-        return ls['dots_printable']
-
-    def get_font_info(font_family_name, font_style_name):
-        try:
-            if font_family_name is None or font_style_name is None:
-                font_family_name = current_app.config['LABEL_DEFAULT_FONT_FAMILY']
-                font_style_name = current_app.config['LABEL_DEFAULT_FONT_STYLE']
-            font_path = FONTS.fonts[font_family_name][font_style_name]
-        except KeyError:
-            raise LookupError("Couln't find the font & style")
-        return font_path, font_family_name, font_style_name
-
-    def get_uploaded_image(image):
-        try:
-            name, ext = os.path.splitext(image.filename)
-            if ext.lower() in ('.png', '.jpg', '.jpeg'):
-                image = imgfile_to_image(image)
-                if context['image_mode'] == 'grayscale':
-                    return convert_image_to_grayscale(image)
-                elif context['image_mode'] == 'red_and_black':
-                    return convert_image_to_red_and_black(image)
-                elif context['image_mode'] == 'colored':
-                    return image
-                else:
-                    return convert_image_to_bw(image, context['image_bw_threshold'])
-            elif ext.lower() in ('.pdf'):
-                image = pdffile_to_image(image, DEFAULT_DPI)
-                if context['image_mode'] == 'grayscale':
-                    return convert_image_to_grayscale(image)
-                else:
-                    return convert_image_to_bw(image, context['image_bw_threshold'])
-            else:
-                return None
-        except AttributeError:
-            return None
-
-    def apply_image_mode(image):
-        if image is None:
-            return None
-        if context['image_mode'] == 'grayscale':
-            return convert_image_to_grayscale(image)
-        elif context['image_mode'] == 'red_and_black':
-            return convert_image_to_red_and_black(image)
-        elif context['image_mode'] == 'colored':
-            return image
-        else:
-            return convert_image_to_bw(image, context['image_bw_threshold'])
-
-    def scale_image_to_box(image, max_width, max_height):
-        if image is None:
-            return None
-        scale = 1.0
-        if max_width > 0 and image.width > max_width:
-            scale = min(scale, max_width / image.width)
-        if max_height > 0 and image.height > max_height:
-            scale = min(scale, max_height / image.height)
-        if scale < 1.0:
-            new_size = (
-                max(1, int(image.width * scale)),
-                max(1, int(image.height * scale))
-            )
-            return image.resize(new_size, resample=RESAMPLE_LANCZOS)
-        return image
-
-    if context['print_type'] == 'text':
-        label_content = LabelContent.TEXT_ONLY
-    elif context['print_type'] == 'qrcode':
-        label_content = LabelContent.QRCODE_ONLY
-    elif context['print_type'] == 'qrcode_text':
-        label_content = LabelContent.TEXT_QRCODE
-    elif context['print_type'] == 'markdown':
-        label_content = LabelContent.MARKDOWN_IMAGE
-    elif context['image_mode'] == 'grayscale':
-        label_content = LabelContent.IMAGE_GRAYSCALE
-    elif context['image_mode'] == 'red_black':
-        label_content = LabelContent.IMAGE_RED_BLACK
-    elif context['image_mode'] == 'colored':
-        label_content = LabelContent.IMAGE_COLORED
-    else:
-        label_content = LabelContent.IMAGE_BW
-
-    if context['label_orientation'] == 'rotated':
-        label_orientation = LabelOrientation.ROTATED
-    else:
-        label_orientation = LabelOrientation.STANDARD
-
-    if context['kind'] == ENDLESS_LABEL:
-        label_type = LabelType.ENDLESS_LABEL
-    elif context['kind'] == DIE_CUT_LABEL:
-        label_type = LabelType.DIE_CUT_LABEL
-    else:
-        label_type = LabelType.ROUND_DIE_CUT_LABEL
-
-    width, height = get_label_dimensions(context['label_size'])
-    if height > width:
-        width, height = height, width
-    if label_orientation == LabelOrientation.ROTATED:
-        height, width = width, height
-
-    def margin_in_pixels(raw_value):
-        try:
-            mm = float(raw_value) / 10.0
-        except (TypeError, ValueError):
-            mm = 0.0
-        return int(round(mm * DEFAULT_DPI / 25.4))
-
-    margin_left_px = margin_in_pixels(context['margin_left_raw'])
-    margin_right_px = margin_in_pixels(context['margin_right_raw'])
-    margin_top_px = margin_in_pixels(context['margin_top_raw'])
-    margin_bottom_px = margin_in_pixels(context['margin_bottom_raw'])
-
-    if label_orientation == LabelOrientation.ROTATED:
-        content_width_px = max(width - margin_left_px - margin_right_px, 1)
-        raw_height_limit_px = height if endless else max(height - margin_top_px - margin_bottom_px, 1)
-    else:
-        content_width_px = max(width - margin_left_px - margin_right_px, 1)
-        raw_height_limit_px = width if endless else max(height - margin_top_px - margin_bottom_px, 1)
-
-    content_height_px = 0 if endless else raw_height_limit_px
-
-    font_path, resolved_family, resolved_style = get_font_info(context['font_family'], context['font_style'])
-    font_map = FONTS.fonts.get(resolved_family, {})
-
-    markdown_page_images = None
-    generated_image = None
+    generated_image: Optional[Image.Image] = None
 
     if label_content == LabelContent.MARKDOWN_IMAGE:
-        render_width = max(content_width_px, 10)
-        base_font_pt = max(6, context['font_size'] * 72 / DEFAULT_DPI)
+        line_spacing = int(context.get('line_spacing', current_app.config['LABEL_DEFAULT_LINE_SPACING']))
+        base_font_pt = max(6, font_size_pt)
 
-        if label_orientation == LabelOrientation.ROTATED and is_endless:
-            auto_slice_mm = render_width / DEFAULT_DPI * 25.4
-            if not paginate or slice_mm_config <= 0:
-                paginate = True
-                slice_mm_config = auto_slice_mm
+        slice_mm_config = float(context.get('markdown_slice_mm', 0) or 0)
+        paginate = bool(context.get('markdown_paged')) and slice_mm_config > 0
 
-        base_image = render_markdown_to_image(
+        if label_orientation == LabelOrientation.ROTATED:
+            if slice_mm_config <= 0:
+                slice_mm_config = MARKDOWN_DEFAULT_SLICE_MM
+            paginate = True
+
+        if label_orientation == LabelOrientation.ROTATED:
+            markdown_render_width_px = max(content_width_standard_px, context.get('head_width_px', 0) or 0, 10)
+        else:
+            markdown_render_width_px = max(content_width_px, 10)
+        render_width_px = markdown_render_width_px
+
+        footer_mm = float(context.get('markdown_footer_mm', MARKDOWN_DEFAULT_FOOTER_MM))
+        page_number_mm = float(context.get('markdown_page_number_mm', MARKDOWN_DEFAULT_PAGE_NUMBER_MM))
+
+        base_image, forced_page_breaks = render_markdown_to_image(
             context.get('text', '') or '',
-            content_width_px=render_width,
+            content_width_px=render_width_px,
             dpi=DEFAULT_DPI,
             base_font_pt=base_font_pt,
-            line_spacing=context['line_spacing'],
+            line_spacing=line_spacing,
             font_map=font_map,
-            preferred_style=resolved_style
+            preferred_style=resolved_style,
+            allow_pagebreaks=paginate
         )
 
         rotate_for_slicing = label_orientation == LabelOrientation.ROTATED
-        if rotate_for_slicing:
-            base_image = base_image.rotate(-90, expand=True)
+
+        if context.get('markdown_page_numbers'):
+            footer_mm = max(footer_mm, page_number_mm)
 
         slice_mm = slice_mm_config if paginate else 0
         context['markdown_paged'] = paginate
         context['markdown_slice_mm'] = slice_mm_config
-        footer_mm = context['markdown_footer_mm']
-        if context['markdown_page_numbers']:
-            footer_mm = max(footer_mm, context['markdown_page_number_mm'])
 
         if slice_mm <= 0 and footer_mm > 0:
             footer_px = mm_to_pixels(footer_mm, DEFAULT_DPI)
@@ -863,41 +820,59 @@ def create_label_from_context(context, image_file=None):
                 extended.paste(base_image, (0, 0))
                 base_image = extended
 
-        pages = slice_markdown_pages(base_image, slice_mm, footer_mm, DEFAULT_DPI)
+        forced_breaks_px = forced_page_breaks if paginate else None
+        pages = slice_markdown_pages(base_image, slice_mm, footer_mm, DEFAULT_DPI, forced_breaks_px=forced_breaks_px)
 
         processed_pages = []
         total_pages = len(pages)
+        numbering_enabled = bool(context.get('markdown_page_numbers'))
+        draw_circle = bool(context.get('markdown_page_circle', True))
+        include_total = bool(context.get('markdown_page_count', True))
+
         for idx, page in enumerate(pages, start=1):
-            if rotate_for_slicing:
-                page = page.rotate(90, expand=True)
-            scaled = scale_image_to_box(page, render_width, content_height_px if content_height_px > 0 else 0)
-            if context['markdown_page_numbers']:
+            scaled = scale_image_to_box(page, render_width_px, content_height_limit_px if content_height_limit_px > 0 else 0)
+            if numbering_enabled:
                 draw_page_number_footer(
                     scaled,
                     idx,
                     total_pages,
                     footer_mm,
-                    context['markdown_page_number_mm'],
+                    page_number_mm,
                     DEFAULT_DPI,
-                    context['markdown_page_circle'],
-                    context['markdown_page_count'],
+                    draw_circle,
+                    include_total,
                     font_path
                 )
+            if rotate_for_slicing:
+                scaled = scaled.transpose(Image.ROTATE_90)
             processed_pages.append(apply_image_mode(scaled))
 
         markdown_page_images = processed_pages if processed_pages else [apply_image_mode(base_image)]
         generated_image = markdown_page_images[0]
-    else:
+    elif label_content in (
+        LabelContent.IMAGE_BW,
+        LabelContent.IMAGE_GRAYSCALE,
+        LabelContent.IMAGE_RED_BLACK,
+        LabelContent.IMAGE_COLORED,
+    ):
         uploaded = get_uploaded_image(image_file)
         processed_image = apply_image_mode(uploaded)
         if processed_image is None:
             raise ValueError('Empty image data')
-        if not is_endless or content_height_px > 0:
-            processed_image = scale_image_to_box(processed_image, content_width_px, content_height_px if content_height_px > 0 else 0)
+
+        if not is_endless or content_height_limit_px > 0:
+            processed_image = scale_image_to_box(
+                processed_image,
+                content_width_px,
+                content_height_limit_px if content_height_limit_px > 0 else 0
+            )
         else:
             if content_width_px > 0 and processed_image.width > content_width_px:
                 scale = content_width_px / processed_image.width
-                new_size = (int(round(processed_image.width * scale)), int(round(processed_image.height * scale)))
+                new_size = (
+                    int(round(processed_image.width * scale)),
+                    int(round(processed_image.height * scale))
+                )
                 processed_image = processed_image.resize(new_size, resample=RESAMPLE_LANCZOS)
 
             def _crop_white(img):
@@ -910,11 +885,12 @@ def create_label_from_context(context, image_file=None):
             x = max(0, (canvas_width - processed_image.width) // 2)
             canvas.paste(processed_image, (x, 0))
             processed_image = canvas
+
         generated_image = processed_image
 
     base_kwargs = dict(
-        width=width,
-        height=height,
+        width=label_width_px,
+        height=label_height_px,
         label_content=label_content,
         label_orientation=label_orientation,
         label_type=label_type,
@@ -924,15 +900,14 @@ def create_label_from_context(context, image_file=None):
             margin_top_px,
             margin_bottom_px
         ),
-        fore_color=(255, 0, 0) if 'red' in context['label_size'] and context['print_color'] == 'red' else (0, 0, 0),
-        text=context['text'],
-        text_align=context['align'],
-        qr_size=context['qrcode_size'],
-        qr_correction=context['qrcode_correction'],
+        fore_color=(255, 0, 0) if 'red' in context['label_size'] and context.get('print_color') == 'red' else (0, 0, 0),
+        text=context.get('text'),
+        text_align=context.get('align', 'center'),
+        qr_size=context.get('qrcode_size'),
+        qr_correction=context.get('qrcode_correction'),
         font_path=font_path,
-        font_size=context['font_size'],
-        line_spacing=context['line_spacing'],
-        head_width_px=context.get('head_width_px')
+        font_size=max(6, font_size_px),
+        line_spacing=int(context.get('line_spacing', current_app.config['LABEL_DEFAULT_LINE_SPACING']))
     )
 
     if label_content == LabelContent.MARKDOWN_IMAGE:
@@ -946,12 +921,12 @@ def create_label_from_context(context, image_file=None):
             lbl._markdown_labels = labels_sequence
 
         return labels_sequence[0]
-    else:
-        kwargs = dict(base_kwargs)
-        kwargs['image'] = generated_image
-        label = SimpleLabel(**kwargs)
-        label._markdown_labels = None
-        return label
+
+    kwargs = dict(base_kwargs)
+    kwargs['image'] = generated_image
+    label = SimpleLabel(**kwargs)
+    label._markdown_labels = None
+    return label
 
 
 def create_label_from_request(request):

@@ -32,6 +32,16 @@ For now I have added Docker support and the ability to print red images on suppo
 -   Print images on red/black paper
 -   Dockerized
 
+#### Label Designer Enhancements
+
+-   Markdown printing now supports smarter pagination:
+    -   Rotated markdown automatically enables paged mode and keeps page numbers upright after slicing.
+    -   Use the `---PAGE---` marker in paged markdown to force an explicit page break.
+    -   Standard-orientation markdown renders within the printable width and hides page-number controls.
+-   A Markdown “Auto render preview” toggle mirrors the live-preview experience of the other print modes.
+-   Font size inputs are interpreted as typographic points; the UI label reflects this (`Font Size (pt)`).
+-   Slicing, footer space, and margin handling have been tightened for both standard and rotated markdown previews.
+
 ### Run via Docker
 
 You can pull the image from `davidramiro/brother-ql-web` on Docker Hub.
@@ -74,6 +84,8 @@ All in all, the web server offers:
 -   a Web GUI allowing you to print your labels at `/labeldesigner`,
 -   an API at `/api/print/text?text=Your_Text&font_size=100&font_family=Minion%20Pro%20(%20Semibold%20)`
     to print a label containing 'Your Text' with the specified font properties.
+
+**Tip:** because font sizes are now specified in points, a 12 pt setting produces text roughly 4.2 mm tall on the Brother QL’s 300 dpi print head (`12 / 72 * 25.4`).
 
 ### License
 

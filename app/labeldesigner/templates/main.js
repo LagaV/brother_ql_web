@@ -119,6 +119,13 @@ function toggleMarkdownButton(show) {
     if (!button.length) {
         return;
     }
+    if (show && markdownAutoRenderEnabled()) {
+        button.hide();
+        if (markdownRenderInFlight) {
+            finishMarkdownRenderFeedback();
+        }
+        return;
+    }
     if (show) {
         button.show();
     } else {
@@ -136,14 +143,74 @@ function toggleMarkdownOptions(show) {
     }
     if (show) {
         container.show();
-        $('#markdownPagedInputs').toggle($('#markdownPaged').is(':checked'));
-        $('#markdownPageNumberInputs').toggle(markdownPageNumbersEnabled());
     } else {
         container.hide();
         $('#markdownPagedInputs').hide();
         $('#markdownPageNumberInputs').hide();
     }
+    enforceMarkdownPagingRules();
     updateMarkdownPager();
+}
+
+function markdownAutoRenderEnabled() {
+    var checkbox = $('#markdownAutoRender');
+    return checkbox.length ? checkbox.is(':checked') : false;
+}
+
+function enforceMarkdownPagingRules() {
+    var checkbox = $('#markdownPaged');
+    if (!checkbox.length) {
+        return;
+    }
+
+    var isMarkdown = (getCheckedValue('printType') === 'markdown');
+    var isRotated = (getCheckedValue('orientation') === 'rotated');
+    var mustPaginate = isMarkdown && isRotated;
+    var stateChanged = false;
+
+    if (mustPaginate) {
+        if (!checkbox.prop('checked')) {
+            checkbox.prop('checked', true);
+            stateChanged = true;
+        }
+        if (!checkbox.prop('disabled')) {
+            checkbox.prop('disabled', true);
+            stateChanged = true;
+        }
+        checkbox.attr('title', 'Paged mode is required when using rotated markdown.');
+    } else {
+        if (checkbox.prop('disabled')) {
+            checkbox.prop('disabled', false);
+            stateChanged = true;
+        }
+        checkbox.removeAttr('title');
+    }
+
+    var showPagedInputs = checkbox.is(':checked') && isMarkdown;
+    $('#markdownPagedInputs').toggle(showPagedInputs);
+
+    var allowPageNumbers = isMarkdown && isRotated && showPagedInputs;
+    var pageNumberCheckbox = $('#markdownPageNumbers');
+    if (pageNumberCheckbox.length) {
+        if (!allowPageNumbers) {
+            if (pageNumberCheckbox.prop('checked')) {
+                pageNumberCheckbox.prop('checked', false);
+                stateChanged = true;
+            }
+            pageNumberCheckbox.prop('disabled', true).attr('title', 'Page numbers available only for rotated markdown.');
+        } else {
+            if (pageNumberCheckbox.prop('disabled')) {
+                pageNumberCheckbox.prop('disabled', false).removeAttr('title');
+                stateChanged = true;
+            }
+        }
+    }
+
+    $('#markdownPageNumberInputs').toggle(allowPageNumbers && markdownPageNumbersEnabled());
+
+    if (stateChanged) {
+        schedulePersist();
+    }
 }
 
 function markdownPagedEnabled() {
@@ -152,9 +219,15 @@ function markdownPagedEnabled() {
 }
 
 function onMarkdownPagedToggle() {
-    $('#markdownPagedInputs').toggle(markdownPagedEnabled());
-    $('#markdownPageNumberInputs').toggle(markdownPagedEnabled() && markdownPageNumbersEnabled());
+    enforceMarkdownPagingRules();
+}
+
+function onMarkdownAutoRenderToggle() {
     schedulePersist();
+    toggleMarkdownButton(getCheckedValue('printType') === 'markdown');
+    if (markdownAutoRenderEnabled()) {
+        preview(true);
+    }
 }
 
 function markdownPageNumbersEnabled() {
@@ -325,6 +398,8 @@ function preview(forceRender) {
         $('.marginsLeftRight').prop('disabled', false).removeAttr('title');
     }
 
+    enforceMarkdownPagingRules();
+
     if (RED_SUPPORT) {
         var labelSizeVal = $('#labelSize').val() || '';
         if (labelSizeVal.includes('red')) {
@@ -356,7 +431,7 @@ function preview(forceRender) {
         return;
     }
 
-    if (isMarkdown && !force) {
+    if (isMarkdown && !force && !markdownAutoRenderEnabled()) {
         return;
     }
 
@@ -492,6 +567,7 @@ function collectSettings() {
         print_color: getCheckedValue('printColor'),
         {% endif %}
         label_text_scroll: caret,
+        markdown_auto_render: markdownAutoRenderEnabled() ? 1 : 0,
         markdown_paged: markdownPagedEnabled() ? 1 : 0,
         markdown_slice_mm: $('#markdownSliceMm').val(),
         markdown_footer_mm: $('#markdownFooterMm').val(),
@@ -566,6 +642,7 @@ function applySettings(settings) {
         $('#markdownPageNumberMm').val(settings.markdown_page_number_mm);
     }
     $('#markdownPageCount').prop('checked', settings.markdown_page_count ? true : false);
+    $('#markdownAutoRender').prop('checked', settings.markdown_auto_render ? true : false);
 
     setRadioGroup('fontAlign', settings.align);
     setRadioGroup('orientation', settings.orientation);
@@ -651,6 +728,7 @@ function registerStorageHandlers() {
         '#marginBottom',
         '#marginLeft',
         '#marginRight',
+        '#markdownAutoRender',
         '#markdownSliceMm',
         '#markdownFooterMm',
         '#markdownPageNumberMm'

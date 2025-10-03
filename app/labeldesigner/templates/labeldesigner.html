@@ -67,7 +67,7 @@
                             <select class="form-control" id="fontStyle" onChange="preview()">
                             </select>
 
-                            <label for="fontSize" style="margin-top: 10px; margin-bottom: 0">Font Size:</label>
+                            <label for="fontSize" style="margin-top: 10px; margin-bottom: 0">Font Size (pt):</label>
                             <input id="fontSize" class="form-control" type="number" min="1" value="{{default_font_size}}" onChange="preview()" required>
 
                             <label for="fontAlign" class="control-label input-group" style="margin-top: 10px; margin-bottom: 0">Font Alignment:</label>
@@ -232,6 +232,10 @@
                 <span class="fas fa-sync" aria-hidden="true"></span> Render Markdown Preview
             </button>
             <div id="markdownOptions" style="display: none; margin-top: 10px;">
+                <div class="form-check" style="margin-bottom: 10px;">
+                    <input class="form-check-input" type="checkbox" id="markdownAutoRender" onChange="onMarkdownAutoRenderToggle()">
+                    <label class="form-check-label" for="markdownAutoRender">Auto render preview</label>
+                </div>
                 <div class="form-check">
                     <input class="form-check-input" type="checkbox" id="markdownPaged" onChange="onMarkdownPagedToggle()">
                     <label class="form-check-label" for="markdownPaged">Enable paged mode</label>

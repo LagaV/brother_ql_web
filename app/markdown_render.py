@@ -13,10 +13,12 @@ from reportlab.lib.units import mm
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import (BaseDocTemplate, Frame, PageTemplate,
-                                Paragraph, Spacer, Table, TableStyle)
+                                Paragraph, Spacer, Table, TableStyle,
+                                PageBreak)
 
 
 DEFAULT_PAGE_HEIGHT_MM = 400.0
+PAGE_BREAK_MARKER = '---PAGE---'
 
 TRIPLE = re.compile(r"\*\*\*(.+?)\*\*\*", flags=re.DOTALL)
 DOUBLE = re.compile(r"\*\*(.+?)\*\*", flags=re.DOTALL)
@@ -124,6 +126,11 @@ def parse_blocks(md_text: str) -> List[Tuple[str, object]]:
             blocks.append(('codeblock', '\n'.join(code_lines)))
             continue
 
+        if line.strip() == PAGE_BREAK_MARKER:
+            blocks.append(('pagebreak', None))
+            idx += 1
+            continue
+
         if BLANK.match(line):
             idx += 1
             continue
@@ -225,7 +232,8 @@ def build_pdf(md_text: str,
               dpi: int,
               base_font_pt: float,
               line_spacing: int,
-              faces: Tuple[str, str, str, str]) -> bytes:
+              faces: Tuple[str, str, str, str],
+              allow_pagebreaks: bool) -> bytes:
     width_mm = width_px / dpi * 25.4
     page_w = width_mm * mm
     page_h = DEFAULT_PAGE_HEIGHT_MM * mm
@@ -331,6 +339,10 @@ def build_pdf(md_text: str,
                 ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
             ]))
             story.append(tbl)
+        elif kind == 'pagebreak':
+            if allow_pagebreaks:
+                story.append(PageBreak())
+            continue
         story.append(Spacer(1, base_font_pt * 0.3))
 
     if not story:
@@ -367,7 +379,7 @@ def _normalize_pdf_image(page: Image.Image, target_px_w: int) -> Optional[Image.
     return image
 
 
-def pdf_bytes_to_image(pdf_bytes: bytes, dpi: int, target_px_w: int) -> Image.Image:
+def pdf_bytes_to_image(pdf_bytes: bytes, dpi: int, target_px_w: int) -> Tuple[Image.Image, List[int]]:
     pages = convert_from_bytes(pdf_bytes, dpi=dpi)
     processed: List[Image.Image] = []
     for page in pages:
@@ -376,15 +388,22 @@ def pdf_bytes_to_image(pdf_bytes: bytes, dpi: int, target_px_w: int) -> Image.Im
             processed.append(normalized)
 
     if not processed:
-        return Image.new('RGB', (max(target_px_w, 1), 1), (255, 255, 255))
+        return Image.new('RGB', (max(target_px_w, 1), 1), (255, 255, 255)), []
 
     total_height = sum(img.height for img in processed)
     output = Image.new('RGB', (processed[0].width, total_height), (255, 255, 255))
     y = 0
+    cumulative_breaks: List[int] = []
     for img in processed:
         output.paste(img, (0, y))
         y += img.height
-    return output
+        cumulative_breaks.append(y)
+
+    # Remove the final total height since it is not a break position
+    if cumulative_breaks:
+        cumulative_breaks.pop()
+
+    return output, cumulative_breaks
 
 
 def render_markdown_to_image(markdown_text: str,
@@ -394,10 +413,12 @@ def render_markdown_to_image(markdown_text: str,
                              base_font_pt: int,
                              line_spacing: int,
                              font_map: Dict[str, str],
-                             preferred_style: str) -> Image.Image:
+                             preferred_style: str,
+                             allow_pagebreaks: bool = False) -> Tuple[Image.Image, List[int]]:
     text = markdown_text or ''
     width_px = max(content_width_px, 10)
     faces = resolve_font_faces(font_map, preferred_style or '')
-    pdf_bytes = build_pdf(text, width_px, dpi, base_font_pt, line_spacing, faces)
-    image = pdf_bytes_to_image(pdf_bytes, dpi, width_px)
-    return image.convert('RGB')
+    pdf_bytes = build_pdf(text, width_px, dpi, base_font_pt, line_spacing, faces, allow_pagebreaks)
+    image, page_breaks = pdf_bytes_to_image(pdf_bytes, dpi, width_px)
+    rgb_image = image.convert('RGB')
+    return rgb_image, page_breaks

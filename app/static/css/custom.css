@@ -49,3 +49,13 @@ label {
     display: block;
     margin-bottom: 0.1rem;
 }
+
+#markdownOptions input#markdownPaged:disabled + label {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+#markdownOptions input#markdownPageNumbers:disabled + label {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
