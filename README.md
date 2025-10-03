@@ -15,6 +15,13 @@ For now I have added Docker support and the ability to print red images on suppo
 
 ![Screenshot](./screenshots/Label-Designer_Desktop.png)
 
+### Label Modes
+
+The designer supports several rendering modes:
+
+-   **Text / QR / Image** – traditional label flows with live preview.
+-   **Markdown** – render rich text (headings, tables, lists) with optional paged slicing, rotated layouts, forced page breaks (`---PAGE---`), and auto-preview.
+
 ### Additional Features
 
 -   Print text as QR Code
@@ -96,3 +103,14 @@ Parts of this package are redistributed software products from 3rd parties. They
 -   [Bootstrap](https://github.com/twbs/bootstrap), MIT License
 -   [Font Awesome](https://github.com/FortAwesome/Font-Awesome), CC BY 4.0 License
 -   [jQuery](https://github.com/jquery/jquery), MIT License
+-   [Flask](https://flask.palletsprojects.com/), BSD License
+-   [Jinja2](https://github.com/pallets/jinja), BSD License
+-   [Python-Markdown](https://python-markdown.github.io/), BSD 3-Clause License
+-   [Poppler](https://poppler.freedesktop.org/), GPL License (used via `poppler-utils` for PDF imports)
+-   Font packages bundled in the Docker image:
+    -   [DejaVu](https://dejavu-fonts.github.io/), Bitstream Vera License / Public Domain
+    -   [Liberation Fonts](https://github.com/liberationfonts/liberation-fonts), SIL Open Font License 1.1
+    -   [Droid Sans](https://github.com/android/platform_frameworks_base/tree/master/data/fonts), Apache License 2.0
+    -   [Terminus](http://terminus-font.sourceforge.net/), SIL Open Font License 1.1
+    -   [Inconsolata](https://github.com/googlefonts/Inconsolata), SIL Open Font License 1.1
+    -   [Noto](https://github.com/notofonts/noto-fonts), SIL Open Font License 1.1
