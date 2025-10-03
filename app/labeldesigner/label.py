@@ -11,6 +11,7 @@ class LabelContent(Enum):
     IMAGE_GRAYSCALE = auto()
     IMAGE_RED_BLACK = auto()
     IMAGE_COLORED = auto()
+    MARKDOWN_IMAGE = auto()
 
 
 class LabelOrientation(Enum):
@@ -118,7 +119,7 @@ class SimpleLabel:
     def generate(self):
         if self._label_content in (LabelContent.QRCODE_ONLY, LabelContent.TEXT_QRCODE):
             img = self._generate_qr()
-        elif self._label_content in (LabelContent.IMAGE_BW, LabelContent.IMAGE_GRAYSCALE, LabelContent.IMAGE_RED_BLACK, LabelContent.IMAGE_COLORED):
+        elif self._label_content in (LabelContent.IMAGE_BW, LabelContent.IMAGE_GRAYSCALE, LabelContent.IMAGE_RED_BLACK, LabelContent.IMAGE_COLORED, LabelContent.MARKDOWN_IMAGE):
             img = self._image
         else:
             img = None
@@ -152,7 +153,10 @@ class SimpleLabel:
 
             vertical_offset_text += img_height
             horizontal_offset_text = max((width - textsize[2])//2, 0)
-            horizontal_offset_image = (width - img_width)//2
+            if self._label_content == LabelContent.MARKDOWN_IMAGE:
+                horizontal_offset_image = margin_left
+            else:
+                horizontal_offset_image = (width - img_width)//2
             vertical_offset_image = margin_top
 
         elif self._label_orientation == LabelOrientation.ROTATED:

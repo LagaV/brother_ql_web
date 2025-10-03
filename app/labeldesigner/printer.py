@@ -53,6 +53,16 @@ class PrinterQueue:
                  'cut': cut
                  })
 
+    def add_label_sequence(self, labels, copies, cut_once=False):
+        if not labels:
+            return
+        total_labels = len(labels)
+        for copy in range(copies):
+            for idx, lbl in enumerate(labels):
+                is_last = (copy == copies - 1) and (idx == total_labels - 1)
+                cut = (not cut_once) or (cut_once and is_last)
+                self._printQueue.append({'label': lbl, 'cut': cut})
+
     def process_queue(self):
         qlr = BrotherQLRaster(self._model)
 

@@ -16,7 +16,7 @@
                         <div class="card-body">
                             <label for="labelSize" style="margin-bottom: 0">Label Size:</label>
                             <select class="form-control" id="labelSize" onChange="preview()">
-                                {% for label_size in label_sizes %}<option value="{{label_size[0]}}" data-round="{{label_size[2]}}" {% if default_label_size == label_size[0] %}selected{% endif %}>{{label_size[1]}}</option>{% endfor %}
+                                {% for label_size in label_sizes %}<option value="{{label_size[0]}}" data-round="{{label_size[2]}}" data-head-width="{{label_size[3]}}" {% if default_label_size == label_size[0] %}selected{% endif %}>{{label_size[1]}}</option>{% endfor %}
                             </select>
 
                             <label for="orientation" class="control-label input-group" style="margin-top: 10px; margin-bottom: 0">Label Orientation:</label>
@@ -202,7 +202,7 @@
     </div>
     <div class="col-md-4">
         <label for="printType" class="control-label input-group" style="margin-bottom: 0">Print Type:</label>
-        <div class="btn-group btn-group-toggle btn-block" data-toggle="buttons">
+        <div class="btn-group btn-group-toggle btn-block print-type-group" data-toggle="buttons">
             <label class="btn btn-secondary active" id="printTypeText">
                 <input type="radio" name="printType" onchange="preview()" value="text" aria-label="Text" checked>
                 <span class="fas fa-font" aria-hidden="true"></span><br>Text
@@ -212,8 +212,12 @@
                 <span class="fas fa-qrcode" aria-hidden="true"></span><br>QR Code
             </label>
             <label class="btn btn-secondary" id="printTypeQrCodeText">
-                <input type="radio" name="printType" onchange="preview()" value="qrcode_text" aria-label="QR Code + Text">
-                <span class="fas fa-qrcode" aria-hidden="true"></span><br>QR Code+Text
+                <input type="radio" name="printType" onchange="preview()" value="qrcode_text" aria-label="QR & Text">
+                <span class="fas fa-qrcode" aria-hidden="true"></span><br>QR &amp; Text
+            </label>
+            <label class="btn btn-secondary" id="printTypeMarkdown">
+                <input type="radio" name="printType" onchange="preview()" value="markdown" aria-label="MD">
+                <span class="fas fa-code" aria-hidden="true"></span><br>MD
             </label>
             <label class="btn btn-secondary" id="printTypeImage">
                 <input type="radio" name="printType" onchange="preview()" value="image" aria-label="Image">
@@ -224,6 +228,37 @@
         <fieldset class="form-group" id="groupLabelText">
             <label for="labelText" style="margin-top: 10px; margin-bottom: 0">Label Text:</label>
             <textarea rows="7" id="labelText" class="form-control" onChange="preview()" onInput="preview()"></textarea>
+            <button type="button" id="renderMarkdownButton" class="btn btn-secondary btn-block" style="margin-top: 10px; display: none;" onClick="renderMarkdown()">
+                <span class="fas fa-sync" aria-hidden="true"></span> Render Markdown Preview
+            </button>
+            <div id="markdownOptions" style="display: none; margin-top: 10px;">
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="markdownPaged" onChange="onMarkdownPagedToggle()">
+                    <label class="form-check-label" for="markdownPaged">Enable paged mode</label>
+                </div>
+                <div id="markdownPagedInputs" style="display: none; margin-top: 10px;">
+                    <label for="markdownSliceMm" style="margin-bottom: 0">Slice height (mm):</label>
+                    <input id="markdownSliceMm" class="form-control" type="number" min="10" value="90">
+                    <label for="markdownFooterMm" style="margin-top: 10px; margin-bottom: 0">Footer height (mm):</label>
+                    <input id="markdownFooterMm" class="form-control" type="number" min="0" value="4">
+                    <div class="form-check" style="margin-top: 10px;">
+                        <input class="form-check-input" type="checkbox" id="markdownPageNumbers" onChange="onMarkdownPageNumbersToggle()" checked>
+                        <label class="form-check-label" for="markdownPageNumbers">Show page numbers</label>
+                    </div>
+                    <div id="markdownPageNumberInputs" style="display: none; margin-top: 10px;">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="markdownPageCount" checked>
+                            <label class="form-check-label" for="markdownPageCount">Show page total</label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="markdownPageCircle" checked>
+                            <label class="form-check-label" for="markdownPageCircle">Draw circle around number</label>
+                        </div>
+                        <label for="markdownPageNumberMm" style="margin-top: 10px; margin-bottom: 0">Page number size (mm):</label>
+                        <input id="markdownPageNumberMm" class="form-control" type="number" min="1" value="4">
+                    </div>
+                </div>
+            </div>
         </fieldset>
         <fieldset class="form-group" id="groupLabelImage">
             <label style="margin-top: 10px; margin-bottom: 0">Label Image:</label>
@@ -235,7 +270,13 @@
         <fieldset class="form-group">
             <label for="previewImg" style="margin-bottom: 0">Label Preview:</label><br />
             <img id="previewImg" style="border: 1px solid #ced4da; max-height: 350px; width: auto; max-width: 100%; margin-bottom: 10px;" />
-            <p>Printed size w/o margins: <span id="labelWidth">?</span> cm x <span id="labelHeight">?</span> cm</p>
+            <div id="markdownPager" class="btn-group btn-group-sm" style="display: none; margin-bottom: 10px;">
+                <button type="button" class="btn btn-secondary" id="markdownPrevPage" onClick="markdownPrevPage()"><span class="fas fa-chevron-left" aria-hidden="true"></span></button>
+                <span class="btn btn-light disabled" id="markdownPageIndicator" style="pointer-events: none;">Page 1 / 1</span>
+                <button type="button" class="btn btn-secondary" id="markdownNextPage" onClick="markdownNextPage()"><span class="fas fa-chevron-right" aria-hidden="true"></span></button>
+            </div>
+            <p>Printed size w/o margins: <span id="labelWidth">?</span> cm x <span id="labelHeight">?</span> cm<br>
+               Printhead width: <span id="headWidth">?</span> px</p>
 
             <div class="form-group">
                 <label for="printCount" style="margin-top: 10px; margin-bottom: 0">Print Count:</label>
