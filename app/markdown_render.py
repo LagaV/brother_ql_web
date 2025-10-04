@@ -233,7 +233,7 @@ def build_pdf(md_text: str,
               base_font_pt: float,
               line_spacing: int,
               faces: Tuple[str, str, str, str],
-              allow_pagebreaks: bool) -> bytes:
+              allow_pagebreaks: bool) -> Tuple[bytes, List[Tuple[int, float, str]]]:
     width_mm = width_px / dpi * 25.4
     page_w = width_mm * mm
     page_h = DEFAULT_PAGE_HEIGHT_MM * mm
@@ -273,6 +273,7 @@ def build_pdf(md_text: str,
     }
 
     story = []
+    table_boundaries: List[Tuple[int, float]] = []
     blocks = parse_blocks(md_text)
 
     for kind, data in blocks:
@@ -327,7 +328,7 @@ def build_pdf(md_text: str,
             for row in rows:
                 table_rows.append([make_cell(text, idx, False) for idx, text in enumerate(row)])
 
-            tbl = Table(table_rows)
+            tbl = TrackingTable(table_rows, tracker=table_boundaries)
             tbl.setStyle(TableStyle([
                 ("BACKGROUND", (0, 0), (-1, 0), colors.whitesmoke),
                 ("LINEBELOW", (0, 0), (-1, 0), 1.0, colors.black),
@@ -349,10 +350,10 @@ def build_pdf(md_text: str,
         story.append(Paragraph('&nbsp;', style_p))
 
     doc.build(story)
-    return buffer.getvalue()
+    return buffer.getvalue(), table_boundaries
 
 
-def _normalize_pdf_image(page: Image.Image, target_px_w: int) -> Optional[Image.Image]:
+def _normalize_pdf_image(page: Image.Image, target_px_w: int) -> Optional[Tuple[Image.Image, int]]:
     image = page.convert('RGB')
 
     if target_px_w > 0 and image.width != target_px_w:
@@ -373,22 +374,28 @@ def _normalize_pdf_image(page: Image.Image, target_px_w: int) -> Optional[Image.
     if not bbox:
         return None
 
-    bottom = max(bbox[3], 20)
-    if bottom < image.height:
-        image = image.crop((0, 0, image.width, bottom))
-    return image
+    top = max(0, bbox[1])
+    bottom = max(top + 1, bbox[3])
+    if bottom < image.height or top > 0:
+        image = image.crop((0, top, image.width, bottom))
+    return image, top
 
 
-def pdf_bytes_to_image(pdf_bytes: bytes, dpi: int, target_px_w: int) -> Tuple[Image.Image, List[int]]:
+def pdf_bytes_to_image(pdf_bytes: bytes, dpi: int, target_px_w: int) -> Tuple[Image.Image, List[int], List[int], List[int]]:
     pages = convert_from_bytes(pdf_bytes, dpi=dpi)
     processed: List[Image.Image] = []
+    page_heights: List[int] = []
+    page_top_offsets: List[int] = []
     for page in pages:
         normalized = _normalize_pdf_image(page, target_px_w)
         if normalized is not None:
-            processed.append(normalized)
+            normalized_image, top_offset = normalized
+            processed.append(normalized_image)
+            page_heights.append(normalized_image.height)
+            page_top_offsets.append(top_offset)
 
     if not processed:
-        return Image.new('RGB', (max(target_px_w, 1), 1), (255, 255, 255)), []
+        return Image.new('RGB', (max(target_px_w, 1), 1), (255, 255, 255)), [], [], []
 
     total_height = sum(img.height for img in processed)
     output = Image.new('RGB', (processed[0].width, total_height), (255, 255, 255))
@@ -403,7 +410,13 @@ def pdf_bytes_to_image(pdf_bytes: bytes, dpi: int, target_px_w: int) -> Tuple[Im
     if cumulative_breaks:
         cumulative_breaks.pop()
 
-    return output, cumulative_breaks
+    page_starts: List[int] = []
+    acc = 0
+    for height in page_heights:
+        page_starts.append(acc)
+        acc += height
+
+    return output, cumulative_breaks, page_starts, page_top_offsets
 
 
 def render_markdown_to_image(markdown_text: str,
@@ -414,11 +427,59 @@ def render_markdown_to_image(markdown_text: str,
                              line_spacing: int,
                              font_map: Dict[str, str],
                              preferred_style: str,
-                             allow_pagebreaks: bool = False) -> Tuple[Image.Image, List[int]]:
+                             allow_pagebreaks: bool = False) -> Tuple[Image.Image, List[int], List[int]]:
     text = markdown_text or ''
     width_px = max(content_width_px, 10)
     faces = resolve_font_faces(font_map, preferred_style or '')
-    pdf_bytes = build_pdf(text, width_px, dpi, base_font_pt, line_spacing, faces, allow_pagebreaks)
-    image, page_breaks = pdf_bytes_to_image(pdf_bytes, dpi, width_px)
+    pdf_bytes, table_boundaries_pt = build_pdf(text, width_px, dpi, base_font_pt, line_spacing, faces, allow_pagebreaks)
+    image, page_breaks, page_starts_px, page_top_offsets_px = pdf_bytes_to_image(pdf_bytes, dpi, width_px)
+    scale = dpi / 72.0
+    table_boundaries_px: List[int] = []
+    boundary_types: Dict[int, str] = {}
+    for page_index, boundary_top_pt, boundary_type in table_boundaries_pt:
+        if page_index >= len(page_starts_px):
+            continue
+        boundary_px = int(round(boundary_top_pt * scale))
+        top_offset = page_top_offsets_px[page_index] if page_index < len(page_top_offsets_px) else 0
+        adjusted_px = boundary_px - top_offset
+        global_px = page_starts_px[page_index] + max(adjusted_px, 0)
+        table_boundaries_px.append(global_px)
+        boundary_types[global_px] = boundary_type
+    table_boundaries_px.sort()
     rgb_image = image.convert('RGB')
-    return rgb_image, page_breaks
+    return rgb_image, page_breaks, (table_boundaries_px, boundary_types)
+class TrackingTable(Table):
+    def __init__(self, data, *args, tracker=None, **kwargs):
+        super().__init__(data, *args, **kwargs)
+        self._slice_tracker = tracker
+
+    def drawOn(self, canvas, x, y, _sW=0):
+        if self._slice_tracker is not None and self._rowHeights:
+            page_height = canvas._pagesize[1]
+            page_index = max(0, canvas.getPageNumber() - 1)
+
+            # Record boundaries after each row (measured from the top edge of each row's bottom border)
+            # In PDF: y points to bottom-left of table, increases upward
+            # When we add heights going up from y, we're moving toward the top of the table
+            # But in image space, we want boundaries in top-to-bottom order
+
+            # Total table height
+            total_height = sum(self._rowHeights)
+
+            # Record boundaries starting from the top of the table (in image space)
+            # which is y + total_height in PDF space (at the top of the table)
+            cumulative = total_height
+            for i, height in enumerate(self._rowHeights):
+                # Boundary before this row (at top of row)
+                # In PDF: this is at y + cumulative (measured from bottom)
+                # Convert to "from top of page": page_height - (y + cumulative)
+                boundary_from_top = page_height - (y + cumulative)
+                # Mark first boundary as table start
+                boundary_type = 'table_start' if i == 0 else 'row'
+                self._slice_tracker.append((page_index, boundary_from_top, boundary_type))
+                cumulative -= height
+
+            # Record boundary after last row (at bottom of table)
+            boundary_from_top = page_height - y
+            self._slice_tracker.append((page_index, boundary_from_top, 'table_end'))
+        return super().drawOn(canvas, x, y, _sW=_sW)

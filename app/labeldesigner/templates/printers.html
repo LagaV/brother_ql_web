@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Printer Management - Brother QL Label Designer</title>
+    <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/css/bootstrap.min.css">
+    <link rel="stylesheet" href="https://use.fontawesome.com/releases/v5.7.2/css/all.css">
+    <style>
+        .printer-card {
+            margin-bottom: 15px;
+            border-left: 4px solid #007bff;
+        }
+        .printer-card.default {
+            border-left-color: #28a745;
+        }
+        .printer-type-badge {
+            font-size: 0.8em;
+        }
+        .readonly-notice {
+            background-color: #fff3cd;
+            border: 1px solid #ffc107;
+            padding: 10px;
+            margin-bottom: 20px;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container mt-4">
+        <div class="row">
+            <div class="col-12">
+                <h2>
+                    <i class="fas fa-print"></i> Printer Management
+                    <a href="/labeldesigner" class="btn btn-secondary btn-sm float-right">
+                        <i class="fas fa-arrow-left"></i> Back to Label Designer
+                    </a>
+                </h2>
+                <hr>
+            </div>
+        </div>
+
+        <div id="readonlyNotice" class="readonly-notice" style="display: none;">
+            <i class="fas fa-info-circle"></i> <strong>Read-Only Mode:</strong>
+            <span id="readonlyMessage"></span>
+        </div>
+
+        <div class="row">
+            <div class="col-md-8">
+                <h4>Configured Printers</h4>
+                <div id="printersContainer">
+                    <p class="text-muted">Loading printers...</p>
+                </div>
+            </div>
+
+            <div class="col-md-4">
+                <h4>Add New Printer</h4>
+                <div class="card">
+                    <div class="card-body">
+                        <form id="addPrinterForm">
+                            <div class="form-group">
+                                <label for="printerName">Printer Name</label>
+                                <input type="text" class="form-control" id="printerName" required>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="printerType">Printer Type</label>
+                                <select class="form-control" id="printerType" required>
+                                    <option value="local">Local Printer</option>
+                                    <option value="remote">Remote Printer</option>
+                                </select>
+                            </div>
+
+                            <div id="localPrinterFields">
+                                <div class="form-group">
+                                    <label for="printerModel">Model</label>
+                                    <select class="form-control" id="printerModel">
+                                        <option>QL-500</option>
+                                        <option>QL-550</option>
+                                        <option>QL-560</option>
+                                        <option>QL-570</option>
+                                        <option>QL-580N</option>
+                                        <option>QL-650TD</option>
+                                        <option>QL-700</option>
+                                        <option>QL-710W</option>
+                                        <option>QL-720NW</option>
+                                        <option>QL-800</option>
+                                        <option>QL-810W</option>
+                                        <option>QL-820NWB</option>
+                                        <option>QL-1050</option>
+                                        <option>QL-1060N</option>
+                                    </select>
+                                </div>
+
+                                <div class="form-group">
+                                    <label for="printerDevice">Device Connection</label>
+                                    <input type="text" class="form-control" id="printerDevice"
+                                           placeholder="e.g., file:///dev/usb/lp0 or tcp://192.168.1.100">
+                                    <small class="form-text text-muted">
+                                        Examples:<br>
+                                        USB: file:///dev/usb/lp0<br>
+                                        Network: tcp://192.168.1.100
+                                    </small>
+                                </div>
+                            </div>
+
+                            <div id="remotePrinterFields" style="display: none;">
+                                <div class="form-group">
+                                    <label for="printerUrl">Remote URL</label>
+                                    <input type="url" class="form-control" id="printerUrl"
+                                           placeholder="http://192.168.1.100:8013">
+                                    <small class="form-text text-muted">
+                                        URL of another brother_ql_web instance
+                                    </small>
+                                </div>
+                            </div>
+
+                            <div class="form-check">
+                                <input type="checkbox" class="form-check-input" id="printerDefault">
+                                <label class="form-check-label" for="printerDefault">
+                                    Set as default printer
+                                </label>
+                            </div>
+
+                            <button type="submit" class="btn btn-primary btn-block mt-3">
+                                <i class="fas fa-plus"></i> Add Printer
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Edit Modal -->
+    <div class="modal fade" id="editModal" tabindex="-1" role="dialog">
+        <div class="modal-dialog" role="document">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Edit Printer</h5>
+                    <button type="button" class="close" data-dismiss="modal">
+                        <span>&times;</span>
+                    </button>
+                </div>
+                <div class="modal-body">
+                    <form id="editPrinterForm">
+                        <input type="hidden" id="editPrinterId">
+
+                        <div class="form-group">
+                            <label for="editPrinterName">Printer Name</label>
+                            <input type="text" class="form-control" id="editPrinterName" required>
+                        </div>
+
+                        <div id="editLocalFields">
+                            <div class="form-group">
+                                <label for="editPrinterModel">Model</label>
+                                <select class="form-control" id="editPrinterModel">
+                                    <option>QL-500</option>
+                                    <option>QL-550</option>
+                                    <option>QL-560</option>
+                                    <option>QL-570</option>
+                                    <option>QL-580N</option>
+                                    <option>QL-650TD</option>
+                                    <option>QL-700</option>
+                                    <option>QL-710W</option>
+                                    <option>QL-720NW</option>
+                                    <option>QL-800</option>
+                                    <option>QL-810W</option>
+                                    <option>QL-820NWB</option>
+                                    <option>QL-1050</option>
+                                    <option>QL-1060N</option>
+                                </select>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="editPrinterDevice">Device Connection</label>
+                                <input type="text" class="form-control" id="editPrinterDevice">
+                            </div>
+                        </div>
+
+                        <div id="editRemoteFields" style="display: none;">
+                            <div class="form-group">
+                                <label for="editPrinterUrl">Remote URL</label>
+                                <input type="url" class="form-control" id="editPrinterUrl">
+                            </div>
+                        </div>
+
+                        <div class="form-check">
+                            <input type="checkbox" class="form-check-input" id="editPrinterDefault">
+                            <label class="form-check-label" for="editPrinterDefault">
+                                Set as default printer
+                            </label>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-primary" onclick="saveEdit()">Save Changes</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://code.jquery.com/jquery-3.3.1.min.js"></script>
+    <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/js/bootstrap.min.js"></script>
+    <script>
+        var isReadonly = false;
+
+        $(document).ready(function() {
+            loadPrinters();
+
+            $('#printerType').change(function() {
+                togglePrinterFields();
+            });
+
+            $('#addPrinterForm').submit(function(e) {
+                e.preventDefault();
+                addPrinter();
+            });
+        });
+
+        function togglePrinterFields() {
+            var type = $('#printerType').val();
+            if (type === 'local') {
+                $('#localPrinterFields').show();
+                $('#remotePrinterFields').hide();
+            } else {
+                $('#localPrinterFields').hide();
+                $('#remotePrinterFields').show();
+            }
+        }
+
+        function loadPrinters() {
+            $.get('/labeldesigner/api/printers/manage', function(data) {
+                isReadonly = data.readonly;
+
+                if (isReadonly) {
+                    $('#readonlyNotice').show();
+                    $('#readonlyMessage').text(data.message || 'Printer configuration is read-only');
+                    $('#addPrinterForm').find('input, select, button').prop('disabled', true);
+                }
+
+                renderPrinters(data.printers);
+            }).fail(function() {
+                $('#printersContainer').html('<div class="alert alert-danger">Failed to load printers</div>');
+            });
+        }
+
+        function renderPrinters(printers) {
+            var container = $('#printersContainer');
+            container.empty();
+
+            if (!printers || printers.length === 0) {
+                container.html('<p class="text-muted">No printers configured</p>');
+                return;
+            }
+
+            printers.forEach(function(printer) {
+                var card = $('<div class="card printer-card"></div>');
+                if (printer.default) {
+                    card.addClass('default');
+                }
+
+                var cardBody = $('<div class="card-body"></div>');
+
+                var title = $('<h5 class="card-title"></h5>').text(printer.name);
+                if (printer.default) {
+                    title.append(' <span class="badge badge-success">Default</span>');
+                }
+                title.append(' <span class="badge badge-info printer-type-badge">' + printer.type + '</span>');
+
+                var details = $('<p class="card-text"></p>');
+                if (printer.type === 'local') {
+                    details.append('<strong>Model:</strong> ' + (printer.model || 'N/A') + '<br>');
+                    details.append('<strong>Device:</strong> ' + (printer.device || 'N/A'));
+                } else {
+                    details.append('<strong>URL:</strong> ' + (printer.url || 'N/A'));
+                }
+
+                cardBody.append(title).append(details);
+
+                if (!isReadonly) {
+                    var actions = $('<div></div>');
+                    var editBtn = $('<button class="btn btn-sm btn-primary mr-2"></button>')
+                        .html('<i class="fas fa-edit"></i> Edit')
+                        .click(function() { editPrinter(printer); });
+                    var deleteBtn = $('<button class="btn btn-sm btn-danger"></button>')
+                        .html('<i class="fas fa-trash"></i> Delete')
+                        .click(function() { deletePrinter(printer.id, printer.name); });
+
+                    actions.append(editBtn).append(deleteBtn);
+                    cardBody.append(actions);
+                }
+
+                card.append(cardBody);
+                container.append(card);
+            });
+        }
+
+        function addPrinter() {
+            if (isReadonly) return;
+
+            var type = $('#printerType').val();
+            var data = {
+                name: $('#printerName').val(),
+                type: type,
+                default: $('#printerDefault').is(':checked')
+            };
+
+            if (type === 'local') {
+                data.model = $('#printerModel').val();
+                data.device = $('#printerDevice').val();
+            } else {
+                data.url = $('#printerUrl').val();
+            }
+
+            $.ajax({
+                url: '/labeldesigner/api/printers/manage',
+                method: 'POST',
+                contentType: 'application/json',
+                data: JSON.stringify(data),
+                success: function(response) {
+                    if (response.success) {
+                        $('#addPrinterForm')[0].reset();
+                        loadPrinters();
+                        alert('Printer added successfully!');
+                    } else {
+                        alert('Error: ' + (response.error || 'Unknown error'));
+                    }
+                },
+                error: function(xhr) {
+                    var error = 'Failed to add printer';
+                    if (xhr.responseJSON && xhr.responseJSON.error) {
+                        error = xhr.responseJSON.error;
+                    }
+                    alert('Error: ' + error);
+                }
+            });
+        }
+
+        function editPrinter(printer) {
+            $('#editPrinterId').val(printer.id);
+            $('#editPrinterName').val(printer.name);
+            $('#editPrinterDefault').prop('checked', printer.default);
+
+            if (printer.type === 'local') {
+                $('#editLocalFields').show();
+                $('#editRemoteFields').hide();
+                $('#editPrinterModel').val(printer.model);
+                $('#editPrinterDevice').val(printer.device);
+            } else {
+                $('#editLocalFields').hide();
+                $('#editRemoteFields').show();
+                $('#editPrinterUrl').val(printer.url);
+            }
+
+            $('#editModal').modal('show');
+        }
+
+        function saveEdit() {
+            if (isReadonly) return;
+
+            var printerId = $('#editPrinterId').val();
+            var data = {
+                name: $('#editPrinterName').val(),
+                default: $('#editPrinterDefault').is(':checked')
+            };
+
+            if ($('#editLocalFields').is(':visible')) {
+                data.model = $('#editPrinterModel').val();
+                data.device = $('#editPrinterDevice').val();
+            } else {
+                data.url = $('#editPrinterUrl').val();
+            }
+
+            $.ajax({
+                url: '/labeldesigner/api/printers/manage/' + printerId,
+                method: 'PUT',
+                contentType: 'application/json',
+                data: JSON.stringify(data),
+                success: function(response) {
+                    if (response.success) {
+                        $('#editModal').modal('hide');
+                        loadPrinters();
+                        alert('Printer updated successfully!');
+                    } else {
+                        alert('Error: ' + (response.error || 'Unknown error'));
+                    }
+                },
+                error: function(xhr) {
+                    var error = 'Failed to update printer';
+                    if (xhr.responseJSON && xhr.responseJSON.error) {
+                        error = xhr.responseJSON.error;
+                    }
+                    alert('Error: ' + error);
+                }
+            });
+        }
+
+        function deletePrinter(printerId, printerName) {
+            if (isReadonly) return;
+
+            if (!confirm('Are you sure you want to delete printer "' + printerName + '"?')) {
+                return;
+            }
+
+            $.ajax({
+                url: '/labeldesigner/api/printers/manage/' + printerId,
+                method: 'DELETE',
+                success: function(response) {
+                    if (response.success) {
+                        loadPrinters();
+                        alert('Printer deleted successfully!');
+                    } else {
+                        alert('Error: ' + (response.error || 'Unknown error'));
+                    }
+                },
+                error: function(xhr) {
+                    var error = 'Failed to delete printer';
+                    if (xhr.responseJSON && xhr.responseJSON.error) {
+                        error = xhr.responseJSON.error;
+                    }
+                    alert('Error: ' + error);
+                }
+            });
+        }
+    </script>
+</body>
+</html>

@@ -15,8 +15,15 @@ class Config(object):
     SERVER_PORT = 8013
     SERVER_HOST = '0.0.0.0'
 
+    # Legacy single printer config (deprecated, use PRINTERS instead)
     PRINTER_MODEL = 'QL-500'
     PRINTER_PRINTER = 'file:///dev/usb/lp1'
+
+    # Multi-printer configuration
+    # Printers are stored in instance/printers.json (managed via web UI)
+    # You can also set PRINTERS here directly if you prefer config-based setup
+    PRINTERS = None  # Set to list of printer dicts to override JSON file
+    PRINTERS_JSON_PATH = None  # Auto-set to instance/printers.json if None
 
     LABEL_DEFAULT_ORIENTATION = 'standard'
     LABEL_DEFAULT_SIZE = '62'

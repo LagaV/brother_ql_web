@@ -5,3 +5,4 @@ qrcode
 pdf2image
 Pillow==10.*
 reportlab
+requests

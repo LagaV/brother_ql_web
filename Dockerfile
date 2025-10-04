@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1.6
+ARG TARGETPLATFORM
 FROM --platform=$TARGETPLATFORM python:3-alpine
 
 WORKDIR /app
@@ -48,4 +48,8 @@ RUN if [ $TARGETARCH == "arm" ]; then \
     ; fi
 
 EXPOSE 8013
+
+# Create volume for persistent data (printers.json, etc.)
+VOLUME /app/instance
+
 ENTRYPOINT ["python3", "run.py"]

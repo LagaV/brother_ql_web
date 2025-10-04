@@ -49,7 +49,8 @@ function formData(cut_once) {
         image_mode:         getCheckedValue('imageMode'),
         print_count:       $('#printCount').val(),
         line_spacing:      getCheckedValue('lineSpacing'),
-        cut_once:          cut_once ? 1 : 0
+        cut_once:          cut_once ? 1 : 0,
+        printer_id:        $('#printerSelect').val()
     };
     if (RED_SUPPORT) {
         data.print_color = getCheckedValue('printColor');
@@ -157,6 +158,20 @@ function markdownAutoRenderEnabled() {
     return checkbox.length ? checkbox.is(':checked') : false;
 }
 
+function normalizeFooterInput() {
+    var input = $('#markdownFooterMm');
+    if (!input.length) {
+        return 0;
+    }
+    var value = parseFloat(input.val());
+    if (isNaN(value)) {
+        value = 0;
+    }
+    value = Math.max(0, value);
+    input.val(value);
+    return value;
+}
+
 function enforceMarkdownPagingRules() {
     var checkbox = $('#markdownPaged');
     if (!checkbox.length) {
@@ -189,7 +204,7 @@ function enforceMarkdownPagingRules() {
     var showPagedInputs = checkbox.is(':checked') && isMarkdown;
     $('#markdownPagedInputs').toggle(showPagedInputs);
 
-    var allowPageNumbers = isMarkdown && isRotated && showPagedInputs;
+    var allowPageNumbers = isMarkdown && showPagedInputs;
     var pageNumberCheckbox = $('#markdownPageNumbers');
     if (pageNumberCheckbox.length) {
         if (!allowPageNumbers) {
@@ -197,7 +212,7 @@ function enforceMarkdownPagingRules() {
                 pageNumberCheckbox.prop('checked', false);
                 stateChanged = true;
             }
-            pageNumberCheckbox.prop('disabled', true).attr('title', 'Page numbers available only for rotated markdown.');
+            pageNumberCheckbox.prop('disabled', true).attr('title', 'Page numbers require paged markdown.');
         } else {
             if (pageNumberCheckbox.prop('disabled')) {
                 pageNumberCheckbox.prop('disabled', false).removeAttr('title');
@@ -238,6 +253,7 @@ function markdownPageNumbersEnabled() {
 function onMarkdownPageNumbersToggle() {
     $('#markdownPageNumberInputs').toggle(markdownPagedEnabled() && markdownPageNumbersEnabled());
     schedulePersist();
+    preview();
 }
 
 function markdownPageCountEnabled() {
@@ -363,8 +379,9 @@ function handlePreviewResponse(raw, isMarkdown) {
     }
 
     if (isMarkdown) {
+        var previousPage = markdownCurrentPage;
         markdownPreviewPages = pages;
-        showMarkdownPage(0);
+        showMarkdownPage(Math.min(previousPage, pages.length - 1));
     } else {
         clearMarkdownPreviewState();
         updatePreview(pages[0]);
@@ -570,7 +587,7 @@ function collectSettings() {
         markdown_auto_render: markdownAutoRenderEnabled() ? 1 : 0,
         markdown_paged: markdownPagedEnabled() ? 1 : 0,
         markdown_slice_mm: $('#markdownSliceMm').val(),
-        markdown_footer_mm: $('#markdownFooterMm').val(),
+        markdown_footer_mm: normalizeFooterInput(),
         markdown_page_numbers: markdownPageNumbersEnabled() ? 1 : 0,
         markdown_page_circle: $('#markdownPageCircle').is(':checked') ? 1 : 0,
         markdown_page_number_mm: $('#markdownPageNumberMm').val(),
@@ -630,7 +647,13 @@ function applySettings(settings) {
         $('#markdownSliceMm').val(settings.markdown_slice_mm);
     }
     if (typeof settings.markdown_footer_mm !== 'undefined' && settings.markdown_footer_mm !== null) {
-        $('#markdownFooterMm').val(settings.markdown_footer_mm);
+        var footerValue = parseFloat(settings.markdown_footer_mm);
+        if (isNaN(footerValue)) {
+            footerValue = 0;
+        }
+        $('#markdownFooterMm').val(Math.max(0, footerValue));
+    } else {
+        $('#markdownFooterMm').val(4);
     }
 
     $('#markdownPaged').prop('checked', settings.markdown_paged ? true : false);
@@ -757,6 +780,30 @@ function registerStorageHandlers() {
     $('#markdownPageCount').on('change', schedulePersist);
 }
 
+function loadPrinters() {
+    $.get('/labeldesigner/api/printers', function(data) {
+        var select = $('#printerSelect');
+        select.empty();
+
+        if (!data.printers || data.printers.length === 0) {
+            select.append('<option value="">No printers configured</option>');
+            return;
+        }
+
+        data.printers.forEach(function(printer) {
+            var option = $('<option></option>')
+                .val(printer.id)
+                .text(printer.name + (printer.type === 'remote' ? ' (Remote)' : ''));
+            if (printer.default) {
+                option.prop('selected', true);
+            }
+            select.append(option);
+        });
+    }).fail(function() {
+        $('#printerSelect').html('<option value="">Error loading printers</option>');
+    });
+}
+
 $(function() {
     storageAvailable = detectStorageSupport();
     var settings = loadSettings();
@@ -768,6 +815,7 @@ $(function() {
 
     registerStorageHandlers();
     updateStyles();
+    loadPrinters();
     preview();
 
     setTimeout(function() {

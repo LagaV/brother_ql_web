@@ -1,4 +1,5 @@
 import os
+import json
 
 import base64
 
@@ -14,8 +15,9 @@ from app.markdown_render import render_markdown_to_image
 
 from .label import SimpleLabel, LabelContent, LabelOrientation, LabelType
 from .printer import PrinterQueue
+from .remote_printer import RemotePrinterQueue
 from PIL import Image, ImageDraw, ImageFont
-from typing import List, Optional
+from typing import Dict, List, Optional, Tuple
 
 try:
     RESAMPLE_LANCZOS = Image.Resampling.LANCZOS
@@ -32,6 +34,7 @@ MARKDOWN_DEFAULT_MIN_BLANK_RUN = 4
 MARKDOWN_DEFAULT_FOOTER_MM = 4.0
 MARKDOWN_DEFAULT_PAGE_NUMBER_MM = 4.0
 MARKDOWN_DEFAULT_SLICE_MM = 90.0
+MARKDOWN_MIN_PAGE_NUMBER_FOOTER_MM = 6.0
 
 
 def get_label_spec(label_size):
@@ -55,23 +58,40 @@ def mm_to_pixels(mm_value, dpi):
     return int(round(mm_float / 25.4 * dpi))
 
 
-def slice_markdown_pages(image, slice_mm, footer_mm, dpi, forced_breaks_px: Optional[List[int]] = None):
+def slice_markdown_pages(image, slice_mm, footer_mm, dpi,
+                         forced_breaks_px: Optional[List[int]] = None,
+                         table_boundaries_px: Optional[List[int]] = None,
+                         boundary_types: Optional[Dict[int, str]] = None):
     footer_px = mm_to_pixels(footer_mm, dpi)
     window_px = mm_to_pixels(MARKDOWN_DEFAULT_SLICE_WINDOW_MM, dpi)
 
-    def _slice_fragment(fragment: Image.Image) -> List[Image.Image]:
+    def _slice_fragment(fragment: Image.Image, start_offset_px: int, carry_boundary: bool) -> Tuple[List[Tuple[Image.Image, bool, bool, int, int]], bool]:
         if fragment.height <= 0:
-            return []
+            return [], carry_boundary
 
         if slice_mm <= 0:
+            page = fragment
             if footer_px > 0:
                 canvas = Image.new('RGB', (fragment.width, fragment.height + footer_px), 'white')
                 canvas.paste(fragment, (0, 0))
-                return [canvas]
-            return [fragment]
+                page = canvas
+            return [(page, carry_boundary, False, fragment.height, 0)], False
 
         effective_footer_px = footer_px if footer_px > 0 else 1
-        return slice_exact_pages(
+        row_blank, row_heavy, row_density = compute_row_stats(
+            fragment,
+            white_threshold=250,
+            max_ink_frac=0.01,
+            downsample_x=4
+        )
+        local_boundaries: Optional[List[int]] = None
+        if table_boundaries_px:
+            local = [b - start_offset_px for b in table_boundaries_px
+                     if start_offset_px < b <= start_offset_px + fragment.height]
+            if local:
+                local_boundaries = sorted(local)
+
+        slices = slice_exact_pages(
             fragment,
             slice_mm,
             dpi,
@@ -79,30 +99,65 @@ def slice_markdown_pages(image, slice_mm, footer_mm, dpi, forced_breaks_px: Opti
             smart=True,
             window_px=window_px,
             min_blank_run=MARKDOWN_DEFAULT_MIN_BLANK_RUN,
-            row_blank=None,
-            row_heavy=None
+            row_blank=row_blank,
+            row_heavy=row_heavy,
+            row_density=row_density,
+            table_boundaries=local_boundaries,
+            start_offset_px=start_offset_px,
+            boundary_types=boundary_types
         )
 
-    if not forced_breaks_px:
-        pages = _slice_fragment(image)
-        return pages if pages else [image]
+        pages_with_flags: List[Tuple[Image.Image, bool, bool, int, int]] = []
+        current_carry = carry_boundary
+        for page_image, top_flag, bottom_flag, content_height, border_overlap in slices:
+            pages_with_flags.append((page_image, top_flag or current_carry, bottom_flag, content_height, border_overlap))
+            current_carry = bottom_flag
 
-    pages: List[Image.Image] = []
+        return pages_with_flags, current_carry
+
+    fragments: List[Tuple[Image.Image, bool, bool, int, int]] = []
     start = 0
     height = image.height
-    for raw_break in sorted(set(forced_breaks_px)):
+    carry = False
+
+    break_positions = sorted(set(forced_breaks_px)) if forced_breaks_px else []
+    for raw_break in break_positions:
         break_y = int(raw_break)
         if break_y <= start or break_y >= height:
             continue
         fragment = image.crop((0, start, image.width, break_y))
-        pages.extend(_slice_fragment(fragment))
+        fragment_slices, carry = _slice_fragment(fragment, start, carry)
+        fragments.extend(fragment_slices)
         start = break_y
 
-    if start < height:
+    if start < height or not fragments:
         fragment = image.crop((0, start, image.width, height))
-        pages.extend(_slice_fragment(fragment))
+        fragment_slices, carry = _slice_fragment(fragment, start, carry)
+        fragments.extend(fragment_slices)
 
-    return pages if pages else [image]
+    if not fragments:
+        return [image]
+
+    final_pages: List[Image.Image] = []
+    for page_img, top_boundary, bottom_boundary, content_height, border_overlap in fragments:
+        # Border lines are now handled by including overlap in the crop
+        if bottom_boundary or top_boundary:
+            draw = ImageDraw.Draw(page_img)
+
+            if bottom_boundary and content_height > 0 and border_overlap > 0:
+                # The content includes border overlap at the bottom
+                # content_height = actual_content + border_overlap (3 pixels)
+                # The horizontal border line is in the overlap region
+                # Erase only the vertical line extensions below the border
+                # The border itself is ~1px thick, so erase from content_height-1
+                erase_start = content_height - 1
+                erase_start = max(0, min(erase_start, page_img.height))
+                if erase_start < page_img.height:
+                    draw.rectangle((0, erase_start, page_img.width, page_img.height), fill='white')
+
+        final_pages.append(page_img)
+
+    return final_pages
 
 
 def draw_page_number_footer(image, index, total, footer_mm, diameter_mm, dpi,
@@ -183,9 +238,24 @@ def build_row_blank_map(image: Image.Image, white_threshold: int = 250, max_ink_
     return row_blank
 
 
-def compute_row_stats(image: Image.Image, white_threshold: int = 250, max_ink_frac: float = 0.01, downsample_x: int = 4) -> tuple[List[bool], List[bool]]:
+def compute_row_stats(image: Image.Image, white_threshold: int = 250, max_ink_frac: float = 0.01, downsample_x: int = 4) -> tuple[List[bool], List[bool], List[float]]:
     gray = image.convert('L')
     width, height = gray.size
+
+    try:
+        mask = gray.point(lambda p: 0 if p >= white_threshold else 255, mode='1')
+        bbox = mask.getbbox()
+    except Exception:
+        bbox = None
+
+    if bbox is not None:
+        left, _, right, _ = bbox
+        left = max(0, left)
+        right = min(width, right)
+        if right > left:
+            gray = gray.crop((left, 0, right, height))
+            width = right - left
+
     if downsample_x > 1:
         ds_width = max(1, width // downsample_x)
         gray = gray.resize((ds_width, height), resample=Image.BOX)
@@ -199,6 +269,7 @@ def compute_row_stats(image: Image.Image, white_threshold: int = 250, max_ink_fr
 
     row_blank: List[bool] = []
     row_heavy: List[bool] = []
+    row_density: List[float] = []
     offset = 0
     for _ in range(height):
         ink = 0
@@ -207,9 +278,10 @@ def compute_row_stats(image: Image.Image, white_threshold: int = 250, max_ink_fr
                 ink += 1
         row_blank.append(ink <= allowance)
         row_heavy.append(ink >= heavy_threshold)
+        row_density.append(ink / float(stride))
         offset += stride
 
-    return row_blank, row_heavy
+    return row_blank, row_heavy, row_density
 
 
 def find_safe_cut_y_rows(row_blank: List[bool], approx_y: int, window_px: int, min_blank_run: int) -> int:
@@ -261,27 +333,61 @@ def find_table_separator_row(row_heavy: List[bool], approx_y: int, window_px: in
     return None
 
 
+def find_previous_boundary(row_blank: List[bool],
+                           row_heavy: Optional[List[bool]],
+                           approx_y: int,
+                           lower_bound: int,
+                           min_blank_run: int) -> Optional[int]:
+    if approx_y <= lower_bound:
+        return None
+
+    best: Optional[int] = None
+    min_blank_run = max(1, min_blank_run)
+
+    for y in range(approx_y - 1, lower_bound - 1, -1):
+        if row_heavy is not None and y < len(row_heavy) and row_heavy[y]:
+            return min(len(row_blank), y + 1)
+
+        start = max(lower_bound, y - min_blank_run + 1)
+        all_blank = True
+        for k in range(start, y + 1):
+            if k >= len(row_blank) or not row_blank[k]:
+                all_blank = False
+                break
+        if all_blank:
+            best = y + 1
+            break
+
+    return best
+
+
 def slice_exact_pages(image: Image.Image, mm_height: float, dpi: int, footer_px: int = 0,
                       smart: bool = True, window_px: int = 0, min_blank_run: int = 4,
                       row_blank: Optional[List[bool]] = None,
-                      row_heavy: Optional[List[bool]] = None) -> List[Image.Image]:
+                      row_heavy: Optional[List[bool]] = None,
+                      row_density: Optional[List[float]] = None,
+                      table_boundaries: Optional[List[int]] = None,
+                      start_offset_px: int = 0,
+                      boundary_types: Optional[Dict[int, str]] = None) -> List[tuple[Image.Image, bool, bool, int, int]]:
     if mm_height <= 0:
-        return [image]
+        return [(image, False, False, image.height, 0)]
     page_px = int(round(mm_height / 25.4 * dpi))
     if page_px <= 0:
-        return [image]
+        return [(image, False, False, image.height, 0)]
 
     content_px = max(page_px - footer_px, 1)
-    pages: List[Image.Image] = []
+    pages: List[tuple[Image.Image, bool, bool, int, int]] = []
 
     effective_row_blank: Optional[List[bool]] = None
     effective_row_heavy: Optional[List[bool]] = None
+    effective_row_density: Optional[List[float]] = row_density
     if smart:
-        if row_blank is not None and row_heavy is not None:
+        if row_blank is not None and row_heavy is not None and row_density is not None:
             effective_row_blank = row_blank
             effective_row_heavy = row_heavy
+            effective_row_density = row_density
         else:
-            effective_row_blank, effective_row_heavy = compute_row_stats(image, white_threshold=250, max_ink_frac=0.01, downsample_x=4)
+            effective_row_blank, effective_row_heavy, effective_row_density = compute_row_stats(image, white_threshold=250, max_ink_frac=0.01, downsample_x=4)
 
     if effective_row_blank is not None:
         try:
@@ -296,29 +402,91 @@ def slice_exact_pages(image: Image.Image, mm_height: float, dpi: int, footer_px:
     y = 0
     window_px = max(0, min(window_px, max(1, content_px - 1)))
 
+    boundary_idx = 0
+    boundaries = table_boundaries or []
+
+    last_boundary = False
+
     while True:
         if y >= total:
             if not pages and total == 0:
-                pages.append(Image.new('RGB', (image.width, page_px), (255, 255, 255)))
+                blank = Image.new('RGB', (image.width, page_px), (255, 255, 255))
+                pages.append((blank, last_boundary, False, 0, 0))
             break
 
         target_cut = min(y + content_px, total)
         remaining = total - y
 
+        min_payload_px = max(int(content_px * 0.25), max(8, min_blank_run))
+        used_boundary = False
+
         if remaining <= content_px:
+            # Remaining content fits in one page, but still check for table boundaries
             cut_y = total
+            if boundaries:
+                candidate_idx = boundary_idx
+                while candidate_idx < len(boundaries) and boundaries[candidate_idx] <= y:
+                    candidate_idx += 1
+
+                last_valid = None
+                scan_idx = candidate_idx
+                while scan_idx < len(boundaries) and boundaries[scan_idx] <= total:
+                    last_valid = boundaries[scan_idx]
+                    scan_idx += 1
+
+                if last_valid is not None and last_valid > y:
+                    cut_y = last_valid
+                    used_boundary = True
+                    boundary_idx = scan_idx
         else:
-            if smart and effective_row_blank is not None and window_px > 0:
-                cut_y = find_safe_cut_y_rows(effective_row_blank, target_cut, window_px, max(1, min_blank_run))
+            candidate_idx = boundary_idx
+            used_boundary = False
+            if boundaries:
+                while candidate_idx < len(boundaries) and boundaries[candidate_idx] <= y:
+                    candidate_idx += 1
+
+                last_valid = None
+                upper_limit = min(y + content_px, total)
+                scan_idx = candidate_idx
+                while scan_idx < len(boundaries) and boundaries[scan_idx] < upper_limit:
+                    last_valid = boundaries[scan_idx]
+                    scan_idx += 1
+
+                if last_valid is not None and last_valid > y:
+                    cut_y = last_valid
+                    used_boundary = True
+                    boundary_idx = scan_idx
+
+            if not used_boundary and smart and effective_row_blank is not None:
+                window = window_px if window_px > 0 else content_px
+                cut_y = find_safe_cut_y_rows(effective_row_blank, target_cut, window, max(1, min_blank_run))
                 if effective_row_heavy is not None and cut_y == target_cut:
-                    table_cut = find_table_separator_row(effective_row_heavy, target_cut, window_px)
+                    table_cut = find_table_separator_row(effective_row_heavy, target_cut, window)
                     if table_cut is not None and table_cut > y:
                         cut_y = min(table_cut, total)
-            else:
+
+                if cut_y == target_cut:
+                    boundary = find_previous_boundary(effective_row_blank, effective_row_heavy, target_cut, y, max(1, min_blank_run))
+                    if boundary is not None and boundary > y:
+                        cut_y = min(boundary, total)
+                if cut_y == target_cut and effective_row_density is not None:
+                    window = window_px if window_px > 0 else content_px
+                    search_lower = max(y, target_cut - window)
+                    best_row = None
+                    best_density = -1.0
+                    for row in range(target_cut - 1, search_lower - 1, -1):
+                        if row < 0 or row >= len(effective_row_density):
+                            continue
+                        density = effective_row_density[row]
+                        if density > best_density:
+                            best_density = density
+                            best_row = row
+                    if best_row is not None and best_density >= 0.95 and best_row + 1 > y:
+                        cut_y = min(best_row + 1, total)
+            elif not used_boundary:
                 cut_y = target_cut
 
-        min_payload_px = max(int(content_px * 0.25), max(8, min_blank_run))
-        if cut_y - y < min_payload_px and remaining > min_payload_px:
+        if not used_boundary and cut_y - y < min_payload_px and remaining > min_payload_px:
             cut_y = min(y + min_payload_px, total)
 
         if cut_y <= y:
@@ -326,12 +494,43 @@ def slice_exact_pages(image: Image.Image, mm_height: float, dpi: int, footer_px:
                 break
             cut_y = min(target_cut, y + max(1, min_blank_run))
 
+        # Skip tiny trailing slices (likely just whitespace)
+        slice_height = cut_y - y
+        min_meaningful_height = max(8, min_blank_run)
+        if slice_height < min_meaningful_height and cut_y >= total:
+            break
+
+        # Check if this boundary should draw border lines
+        # Only draw borders for 'row' boundaries (mid-table), not 'table_start' or 'table_end'
+        boundary_used = used_boundary
+        border_overlap = 0
+        actual_content_height = cut_y - y
+        if boundary_types and boundaries:
+            # Find the global boundary position for this local cut
+            global_cut_pos = start_offset_px + cut_y
+            boundary_type = boundary_types.get(global_cut_pos, 'row')
+            # Don't draw border if cutting at table start or end
+            if boundary_type in ('table_start', 'table_end'):
+                boundary_used = False
+            elif boundary_type == 'row' and used_boundary:
+                # For row boundaries, extend crop to include the border line
+                # INNERGRID is 0.6pt ≈ 2.5px at 300dpi, use 3px to be safe
+                border_overlap = 3
+
         page = Image.new('RGB', (image.width, page_px), (255, 255, 255))
         if cut_y > y:
-            page.paste(image.crop((0, y, image.width, cut_y)), (0, 0))
-        pages.append(page)
+            # Extend the crop to include border if needed
+            crop_end = min(cut_y + border_overlap, total)
+            crop_box = (0, y, image.width, crop_end)
+            page.paste(image.crop(crop_box), (0, 0))
+
+        content_height = actual_content_height + border_overlap
+        current_app.logger.info('[slice-debug] slice result y=%s cut_y=%s boundary_used=%s crop_height=%s border_overlap=%s',
+                                y, cut_y, boundary_used, content_height, border_overlap)
+        pages.append((page, last_boundary, boundary_used, content_height, border_overlap))
 
         y = cut_y
+        last_boundary = boundary_used
 
     return pages
 
@@ -342,6 +541,12 @@ LABEL_SIZES = [(
         ROUND_DIE_CUT_LABEL,)),
     label_type_specs[name]['dots_printable'][0]
 ) for name in label_sizes]
+
+
+@bp.route('/printers')
+def printers_page():
+    """Printer management page"""
+    return render_template('printers.html')
 
 
 @bp.route('/')
@@ -486,18 +691,104 @@ def markdown_print_api():
 def create_printer_from_request(request):
     d = request.values
     context = {
-        'label_size': d.get('label_size', '62')
+        'label_size': d.get('label_size', '62'),
+        'printer_id': d.get('printer_id', None)
     }
 
-    return create_printer_queue(context['label_size'])
+    return create_printer_queue(context['label_size'], context['printer_id'])
 
 
-def create_printer_queue(label_size):
-    return PrinterQueue(
-        model=current_app.config['PRINTER_MODEL'],
-        device_specifier=current_app.config['PRINTER_PRINTER'],
-        label_size=label_size
-    )
+def get_printers_json_path():
+    """Get path to printers.json file"""
+    path = current_app.config.get('PRINTERS_JSON_PATH')
+    if path:
+        return path
+    instance_path = current_app.instance_path
+    os.makedirs(instance_path, exist_ok=True)
+    return os.path.join(instance_path, 'printers.json')
+
+
+def load_printers_from_json():
+    """Load printers from JSON file"""
+    json_path = get_printers_json_path()
+    if os.path.exists(json_path):
+        try:
+            with open(json_path, 'r') as f:
+                return json.load(f)
+        except Exception:
+            return []
+    return []
+
+
+def save_printers_to_json(printers):
+    """Save printers to JSON file"""
+    json_path = get_printers_json_path()
+    with open(json_path, 'w') as f:
+        json.dump(printers, f, indent=2)
+
+
+def get_available_printers():
+    """Get list of configured printers"""
+    # Check if PRINTERS is set in config (takes precedence)
+    printers = current_app.config.get('PRINTERS')
+    if printers is not None:
+        return printers
+
+    # Load from JSON file
+    printers = load_printers_from_json()
+    if printers:
+        return printers
+
+    # Fallback to legacy config
+    return [{
+        'id': 'default',
+        'name': 'Default Printer',
+        'type': 'local',
+        'model': current_app.config['PRINTER_MODEL'],
+        'device': current_app.config['PRINTER_PRINTER'],
+        'default': True
+    }]
+
+
+def get_default_printer():
+    """Get the default printer configuration"""
+    printers = get_available_printers()
+    for printer in printers:
+        if printer.get('default', False):
+            return printer
+    return printers[0] if printers else None
+
+
+def create_printer_queue(label_size, printer_id=None):
+    """Create printer queue for specified or default printer"""
+    printers = get_available_printers()
+
+    # Find requested printer or use default
+    printer_config = None
+    if printer_id:
+        for p in printers:
+            if p.get('id') == printer_id:
+                printer_config = p
+                break
+
+    if not printer_config:
+        printer_config = get_default_printer()
+
+    if not printer_config:
+        raise ValueError("No printer configured")
+
+    # Create appropriate queue type
+    if printer_config['type'] == 'remote':
+        return RemotePrinterQueue(
+            remote_url=printer_config['url'],
+            label_size=label_size
+        )
+    else:  # local
+        return PrinterQueue(
+            model=printer_config['model'],
+            device_specifier=printer_config['device'],
+            label_size=label_size
+        )
 
 
 def build_label_context_from_request(request):
@@ -547,7 +838,8 @@ def build_label_context_from_request(request):
         'markdown_page_circle': int(d.get('markdown_page_circle', 1)) == 1,
         'markdown_page_number_mm': to_float(d.get('markdown_page_number_mm', None), MARKDOWN_DEFAULT_PAGE_NUMBER_MM),
         'markdown_page_count': int(d.get('markdown_page_count', 1)) == 1,
-        'head_width_px': width
+        'head_width_px': width,
+        'no_crop': int(d.get('no_crop', 0)) == 1
     }
 
     if print_type == 'markdown' and orientation == 'rotated':
@@ -555,10 +847,6 @@ def build_label_context_from_request(request):
         slice_mm = context['markdown_slice_mm']
         if slice_mm <= 0:
             context['markdown_slice_mm'] = MARKDOWN_DEFAULT_SLICE_MM
-    elif print_type == 'markdown':
-        context['markdown_page_numbers'] = False
-        context['markdown_page_count'] = False
-        context['markdown_page_circle'] = False
 
     return context
 
@@ -616,10 +904,6 @@ def build_label_context_from_json(data):
         context['markdown_paged'] = True
         if context['markdown_slice_mm'] <= 0:
             context['markdown_slice_mm'] = MARKDOWN_DEFAULT_SLICE_MM
-    else:
-        context['markdown_page_numbers'] = False
-        context['markdown_page_count'] = False
-        context['markdown_page_circle'] = False
 
     return context
 
@@ -764,8 +1048,17 @@ def create_label_from_context(context, image_file=None):
             content_width_px = content_width_standard_px
         content_height_limit_px = 0 if is_endless else content_width_standard_px
 
-    font_path, resolved_family, resolved_style = get_font_info(context.get('font_family'), context.get('font_style'))
-    font_map = FONTS.fonts.get(resolved_family, {})
+    # Only load fonts if needed for text-based content
+    if label_content in (LabelContent.TEXT_ONLY, LabelContent.QRCODE_ONLY, LabelContent.TEXT_QRCODE, LabelContent.MARKDOWN_IMAGE):
+        font_path, resolved_family, resolved_style = get_font_info(context.get('font_family'), context.get('font_style'))
+        font_map = FONTS.fonts.get(resolved_family, {})
+    else:
+        # Image-only labels don't need fonts
+        font_path = None
+        resolved_family = None
+        resolved_style = None
+        font_map = {}
+
     font_size_pt = float(context.get('font_size', current_app.config['LABEL_DEFAULT_FONT_SIZE']))
     font_size_px = points_to_pixels(font_size_pt)
 
@@ -790,10 +1083,11 @@ def create_label_from_context(context, image_file=None):
             markdown_render_width_px = max(content_width_px, 10)
         render_width_px = markdown_render_width_px
 
-        footer_mm = float(context.get('markdown_footer_mm', MARKDOWN_DEFAULT_FOOTER_MM))
+        raw_footer_mm = float(context.get('markdown_footer_mm', MARKDOWN_DEFAULT_FOOTER_MM))
+        footer_mm = raw_footer_mm
         page_number_mm = float(context.get('markdown_page_number_mm', MARKDOWN_DEFAULT_PAGE_NUMBER_MM))
 
-        base_image, forced_page_breaks = render_markdown_to_image(
+        base_image, forced_page_breaks, table_boundaries_data = render_markdown_to_image(
             context.get('text', '') or '',
             content_width_px=render_width_px,
             dpi=DEFAULT_DPI,
@@ -803,29 +1097,36 @@ def create_label_from_context(context, image_file=None):
             preferred_style=resolved_style,
             allow_pagebreaks=paginate
         )
+        table_boundaries_px, boundary_types = table_boundaries_data
+        current_app.logger.info('[slice-debug] global table boundaries: %s', table_boundaries_px[:10])
 
         rotate_for_slicing = label_orientation == LabelOrientation.ROTATED
 
-        if context.get('markdown_page_numbers'):
-            footer_mm = max(footer_mm, page_number_mm)
+        numbering_enabled = bool(context.get('markdown_page_numbers'))
+        effective_footer_mm = footer_mm
+        if numbering_enabled:
+            effective_footer_mm = max(footer_mm, page_number_mm, MARKDOWN_MIN_PAGE_NUMBER_FOOTER_MM)
 
         slice_mm = slice_mm_config if paginate else 0
         context['markdown_paged'] = paginate
         context['markdown_slice_mm'] = slice_mm_config
 
-        if slice_mm <= 0 and footer_mm > 0:
-            footer_px = mm_to_pixels(footer_mm, DEFAULT_DPI)
+        if slice_mm <= 0 and effective_footer_mm > 0:
+            footer_px = mm_to_pixels(effective_footer_mm, DEFAULT_DPI)
             if footer_px > 0:
                 extended = Image.new('RGB', (base_image.width, base_image.height + footer_px), 'white')
                 extended.paste(base_image, (0, 0))
                 base_image = extended
 
         forced_breaks_px = forced_page_breaks if paginate else None
-        pages = slice_markdown_pages(base_image, slice_mm, footer_mm, DEFAULT_DPI, forced_breaks_px=forced_breaks_px)
+        boundaries_px = table_boundaries_px
+        pages = slice_markdown_pages(base_image, slice_mm, effective_footer_mm, DEFAULT_DPI,
+                                     forced_breaks_px=forced_breaks_px,
+                                     table_boundaries_px=boundaries_px,
+                                     boundary_types=boundary_types)
 
         processed_pages = []
         total_pages = len(pages)
-        numbering_enabled = bool(context.get('markdown_page_numbers'))
         draw_circle = bool(context.get('markdown_page_circle', True))
         include_total = bool(context.get('markdown_page_count', True))
 
@@ -836,7 +1137,7 @@ def create_label_from_context(context, image_file=None):
                     scaled,
                     idx,
                     total_pages,
-                    footer_mm,
+                    effective_footer_mm,
                     page_number_mm,
                     DEFAULT_DPI,
                     draw_circle,
@@ -875,11 +1176,14 @@ def create_label_from_context(context, image_file=None):
                 )
                 processed_image = processed_image.resize(new_size, resample=RESAMPLE_LANCZOS)
 
-            def _crop_white(img):
-                bbox = img.convert('L').point(lambda p: 0 if p >= 250 else 255, '1').getbbox()
-                return img.crop(bbox) if bbox else img
+            # Only crop whitespace if not explicitly disabled (e.g., for paged prints from remote)
+            no_crop = context.get('no_crop', False)
+            if not no_crop:
+                def _crop_white(img):
+                    bbox = img.convert('L').point(lambda p: 0 if p >= 250 else 255, '1').getbbox()
+                    return img.crop(bbox) if bbox else img
 
-            processed_image = _crop_white(processed_image)
+                processed_image = _crop_white(processed_image)
             canvas_width = int(content_width_px)
             canvas = Image.new('RGB', (canvas_width, processed_image.height), 'white')
             x = max(0, (canvas_width - processed_image.width) // 2)
@@ -932,3 +1236,183 @@ def create_label_from_context(context, image_file=None):
 def create_label_from_request(request):
     context = build_label_context_from_request(request)
     return create_label_from_context(context, image_file=request.files.get('image', None))
+
+
+# Printer Management API Endpoints
+
+@bp.route('/api/printers', methods=['GET'])
+def api_list_printers():
+    """List all configured printers"""
+    printers = get_available_printers()
+    # Don't expose full device strings for security, just basics
+    safe_printers = [
+        {
+            'id': p.get('id'),
+            'name': p.get('name'),
+            'type': p.get('type'),
+            'default': p.get('default', False)
+        }
+        for p in printers
+    ]
+    return jsonify({'printers': safe_printers})
+
+
+@bp.route('/api/printers/manage', methods=['GET'])
+def api_get_printers_full():
+    """Get full printer configurations for management UI"""
+    # Check if using config-based printers (read-only)
+    if current_app.config.get('PRINTERS') is not None:
+        return jsonify({
+            'printers': current_app.config.get('PRINTERS'),
+            'readonly': True,
+            'message': 'Printers are configured in config file (read-only)'
+        })
+
+    printers = load_printers_from_json()
+    return jsonify({
+        'printers': printers,
+        'readonly': False
+    })
+
+
+@bp.route('/api/printers/manage', methods=['POST'])
+def api_add_printer():
+    """Add a new printer"""
+    try:
+        # Check if read-only mode
+        if current_app.config.get('PRINTERS') is not None:
+            return jsonify({'success': False, 'error': 'Printers configured in config file (read-only)'}), 403
+
+        data = request.get_json()
+        if not data:
+            return jsonify({'success': False, 'error': 'No data provided'}), 400
+
+        # Validate required fields
+        if not data.get('name'):
+            return jsonify({'success': False, 'error': 'Printer name is required'}), 400
+
+        printer_type = data.get('type', 'local')
+        if printer_type not in ['local', 'remote']:
+            return jsonify({'success': False, 'error': 'Invalid printer type'}), 400
+
+        if printer_type == 'local':
+            if not data.get('model') or not data.get('device'):
+                return jsonify({'success': False, 'error': 'Model and device are required for local printers'}), 400
+        else:  # remote
+            if not data.get('url'):
+                return jsonify({'success': False, 'error': 'URL is required for remote printers'}), 400
+
+        # Load existing printers
+        printers = load_printers_from_json()
+
+        # Generate unique ID
+        import uuid
+        new_id = str(uuid.uuid4())
+
+        # Create new printer
+        new_printer = {
+            'id': new_id,
+            'name': data['name'],
+            'type': printer_type,
+            'default': data.get('default', False)
+        }
+
+        if printer_type == 'local':
+            new_printer['model'] = data['model']
+            new_printer['device'] = data['device']
+        else:
+            new_printer['url'] = data['url']
+
+        # If this is set as default, unset others
+        if new_printer['default']:
+            for p in printers:
+                p['default'] = False
+
+        printers.append(new_printer)
+        save_printers_to_json(printers)
+
+        return jsonify({'success': True, 'printer': new_printer})
+    except Exception as e:
+        current_app.logger.error('Failed to add printer: %s', e)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@bp.route('/api/printers/manage/<printer_id>', methods=['PUT'])
+def api_update_printer(printer_id):
+    """Update an existing printer"""
+    # Check if read-only mode
+    if current_app.config.get('PRINTERS') is not None:
+        return jsonify({'success': False, 'error': 'Printers configured in config file (read-only)'}), 403
+
+    data = request.get_json()
+    if not data:
+        return jsonify({'success': False, 'error': 'No data provided'}), 400
+
+    printers = load_printers_from_json()
+
+    # Find printer
+    printer_index = None
+    for i, p in enumerate(printers):
+        if p.get('id') == printer_id:
+            printer_index = i
+            break
+
+    if printer_index is None:
+        return jsonify({'success': False, 'error': 'Printer not found'}), 404
+
+    # Update printer
+    printer = printers[printer_index]
+    if 'name' in data:
+        printer['name'] = data['name']
+    if 'default' in data:
+        is_default = data['default']
+        printer['default'] = is_default
+        # If setting as default, unset others
+        if is_default:
+            for i, p in enumerate(printers):
+                if i != printer_index:
+                    p['default'] = False
+
+    if printer['type'] == 'local':
+        if 'model' in data:
+            printer['model'] = data['model']
+        if 'device' in data:
+            printer['device'] = data['device']
+    else:  # remote
+        if 'url' in data:
+            printer['url'] = data['url']
+
+    save_printers_to_json(printers)
+
+    return jsonify({'success': True, 'printer': printer})
+
+
+@bp.route('/api/printers/manage/<printer_id>', methods=['DELETE'])
+def api_delete_printer(printer_id):
+    """Delete a printer"""
+    # Check if read-only mode
+    if current_app.config.get('PRINTERS') is not None:
+        return jsonify({'success': False, 'error': 'Printers configured in config file (read-only)'}), 403
+
+    printers = load_printers_from_json()
+
+    # Find and remove printer
+    printer_index = None
+    for i, p in enumerate(printers):
+        if p.get('id') == printer_id:
+            printer_index = i
+            break
+
+    if printer_index is None:
+        return jsonify({'success': False, 'error': 'Printer not found'}), 404
+
+    was_default = printers[printer_index].get('default', False)
+    printers.pop(printer_index)
+
+    # If deleted printer was default, set first remaining as default
+    if was_default and printers:
+        printers[0]['default'] = True
+
+    save_printers_to_json(printers)
+
+    return jsonify({'success': True})

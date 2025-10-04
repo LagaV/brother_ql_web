@@ -38,6 +38,11 @@ The designer supports several rendering modes:
 -   Make preview for round labels.. round
 -   Print images on red/black paper
 -   Dockerized
+-   **Multi-Printer Support**
+    -   Manage multiple printers (local and remote) via web UI
+    -   Forward print jobs to remote brother_ql_web instances
+    -   Per-print printer selection
+    -   Persistent printer configurations
 
 #### Label Designer Enhancements
 
@@ -45,7 +50,7 @@ The designer supports several rendering modes:
     -   Rotated markdown automatically enables paged mode and keeps page numbers upright after slicing.
     -   Use the `---PAGE---` marker in paged markdown to force an explicit page break.
     -   Standard-orientation markdown renders within the printable width and hides page-number controls.
--   A Markdown “Auto render preview” toggle mirrors the live-preview experience of the other print modes.
+-   A Markdown "Auto render preview" toggle mirrors the live-preview experience of the other print modes.
 -   Font size inputs are interpreted as typographic points; the UI label reflects this (`Font Size (pt)`).
 -   Slicing, footer space, and margin handling have been tightened for both standard and rotated markdown previews.
 
@@ -63,11 +68,14 @@ docker run -d \
     --name=brother-ql-web \
     -p 8013:8013 \
     --device=/dev/usb/lp0 \
+    -v brother-ql-data:/app/instance \
     davidramiro/brother-ql-web:latest \
     --default-label-size 62 \
     --model QL-800 \
     file:///dev/usb/lp0
 ```
+
+**Note:** The `-v brother-ql-data:/app/instance` volume mount ensures printer configurations persist across container restarts.
 
 To build the image locally:
 
@@ -92,7 +100,73 @@ All in all, the web server offers:
 -   an API at `/api/print/text?text=Your_Text&font_size=100&font_family=Minion%20Pro%20(%20Semibold%20)`
     to print a label containing 'Your Text' with the specified font properties.
 
-**Tip:** because font sizes are now specified in points, a 12 pt setting produces text roughly 4.2 mm tall on the Brother QL’s 300 dpi print head (`12 / 72 * 25.4`).
+### Markdown API
+
+You can render markdown directly through the JSON endpoint:
+
+-   `POST /api/markdown/preview`
+
+Request body (all values optional unless noted):
+
+| Key | Type | Notes |
+| --- | --- | --- |
+| `markdown` | string | **Required** – the markdown source. Use `---PAGE---` on its own line to force a manual break when paged mode is active. |
+| `label_size` | string | Brother media identifier (e.g. `62`, `62_red`). Defaults to the server configuration. |
+| `orientation` | `"standard"` \\| `"rotated"` | Rotated automatically enables paged slicing. |
+| `paged` | bool | Enable paged mode. Rotated requests ignore `false` and page automatically. |
+| `slice_mm` | float | Slice height (mm) when paged mode is on. |
+| `footer_mm` | float | Extra footer room on each slice (mm); automatically expanded if page numbers are drawn. |
+| `page_numbers` | bool | Show numbering footer (only honored in rotated mode). |
+| `page_circle`, `page_count`, `page_number_mm` | bool/float | Footer styling options. |
+| `align` | `left` \\| `center` \\| `right` | Paragraph alignment. |
+| `margins` | object | Optional `{top_mm, bottom_mm, left_mm, right_mm}` overrides. |
+| `font_family`, `font_style`, `font_size` | string / string / float | Fonts must exist in the server's catalog; `font_size` is specified in points. |
+| `line_spacing` | integer | Percentage (100 = single spacing). |
+
+Response:
+
+```json
+{
+  "pages": ["<base64 image>", "<base64 image>", ...]
+}
+```
+
+Each base64 string is a PNG of one label slice, matching the behaviour of the web preview.
+
+### Markdown Syntax
+
+The renderer is based on Python-Markdown but tuned for label printing. Supported block features include headings (`#`, `##`, `###`), paragraphs, unordered/ordered lists, fenced code blocks, block quotes, tables with alignment headers, and forced page breaks (`---PAGE---`). Inline emphasis supports bold (`**text**`), italic (`*text*`), bold italic (`***text***`), inline code (`` `code` ``), and nested combinations. The output is rendered at 300 dpi using the selected font family/style and observed margins.
+
+**Tip:** because font sizes are now specified in points, a 12 pt setting produces text roughly 4.2 mm tall on the Brother QL's 300 dpi print head (`12 / 72 * 25.4`).
+
+### Multi-Printer Management
+
+The application supports managing multiple printers (local and/or remote) through a web-based interface.
+
+#### Features
+
+- **Local Printers**: Connect to Brother QL printers via USB, network (TCP), or other local connections
+- **Remote Printers**: Forward print jobs to other brother_ql_web instances over HTTP
+- **Web UI Management**: Add, edit, delete, and configure printers at `/labeldesigner/printers`
+- **Default Printer**: Set a default printer for quick access
+- **Per-Print Selection**: Choose which printer to use for each print job
+- **Persistent Storage**: Printer configurations are stored in `/app/instance/printers.json` (persist with Docker volumes)
+
+#### Managing Printers
+
+1. Navigate to `/labeldesigner/printers` in your browser
+2. Click "Add New Printer" and configure:
+   - **Local Printer**: Specify model (e.g., QL-800) and device (e.g., `file:///dev/usb/lp0` or `tcp://192.168.1.100`)
+   - **Remote Printer**: Provide the URL of another brother_ql_web instance (e.g., `http://192.168.1.100:8013`)
+3. Set a default printer (optional)
+4. Use the printer selector dropdown in the main UI to choose which printer to use
+
+#### Example Use Cases
+
+- **Multiple Locations**: Configure remote printers in different offices/rooms
+- **Backup Printer**: Set up a fallback printer when the primary is offline
+- **Different Label Types**: Use different printers for different label sizes or colors
+- **Centralized Management**: Run one instance as a "manager" that forwards to multiple physical printers
 
 ### License
 
