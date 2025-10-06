@@ -3,6 +3,7 @@ Flask
 flask_bootstrap4
 qrcode
 pdf2image
+PyPDF2
 Pillow==10.*
 reportlab
 requests

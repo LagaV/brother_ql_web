@@ -34,6 +34,14 @@ class RemotePrinterQueue:
         for idx, queue_entry in enumerate(self._printQueue, 1):
             img = queue_entry['label'].generate()
 
+            # For landscape images, rotate to portrait to fit printhead width
+            # The landscape rendering (text left-to-right) is correct, we just need
+            # to rotate the PNG so it fits the printer's printhead width
+            if img.width > img.height:
+                # Rotate 90° clockwise: landscape 945×590 → portrait 590×945
+                img = img.transpose(Image.ROTATE_270)
+                logger.info(f"Rotated landscape image to portrait for printhead: {img.width}x{img.height}")
+
             # Add a very light grey pixel in the last row to prevent cropping
             # This ensures the full image height is preserved on the remote server
             if img.height > 0 and img.width > 0:
@@ -51,8 +59,7 @@ class RemotePrinterQueue:
                 'image': ('label.png', buffered, 'image/png')
             }
 
-            # Send explicit font parameters to work around remote server that requires them
-            # even for image-only prints (until remote server is updated with the fix)
+            # Use same approach as ql-print-md.py: always standard orientation
             data = {
                 'label_size': self.label_size,
                 'orientation': 'standard',
@@ -70,6 +77,8 @@ class RemotePrinterQueue:
                 # Prevent remote server from cropping whitespace (for paged prints)
                 'no_crop': '1'
             }
+
+            logger.info(f"Sending to remote: {img.width}x{img.height} image, orientation=standard")
 
             try:
                 url = f"{self.remote_url}/labeldesigner/api/print"
@@ -98,3 +107,44 @@ class RemotePrinterQueue:
                 raise Exception(f"Remote printer error: {str(e)}")
 
         self._printQueue.clear()
+
+
+def get_remote_printer_status(remote_url):
+    """
+    Query a remote brother_ql_web instance for printer status.
+
+    Args:
+        remote_url: Base URL of the remote brother_ql_web instance
+
+    Returns:
+        dict: Status information or None if not supported/unreachable
+    """
+    try:
+        url = f"{remote_url.rstrip('/')}/labeldesigner/api/printer/status"
+        logger.info(f"Querying remote printer status: {url}")
+
+        response = requests.get(url, timeout=5)
+
+        # If endpoint doesn't exist (404), return None
+        if response.status_code == 404:
+            logger.info(f"Remote printer does not support status endpoint: {url}")
+            return None
+
+        response.raise_for_status()
+
+        result = response.json()
+        if result.get('success'):
+            return result.get('status')
+        else:
+            logger.warning(f"Remote printer status query failed: {result.get('error')}")
+            return None
+
+    except requests.exceptions.Timeout:
+        logger.warning(f"Remote printer status query timed out: {remote_url}")
+        return None
+    except requests.exceptions.RequestException as e:
+        logger.warning(f"Remote printer status query failed: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"Error querying remote printer status: {e}", exc_info=True)
+        return None

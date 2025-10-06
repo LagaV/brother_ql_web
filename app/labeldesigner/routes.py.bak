@@ -575,43 +575,9 @@ def index():
 
 @bp.route('/api/font/styles', methods=['POST', 'GET'])
 def get_font_styles():
-    font_family_name = request.values.get(
+    font = request.values.get(
         'font', current_app.config['LABEL_DEFAULT_FONT_FAMILY'])
-    
-    # Debug: what font family is requested
-    current_app.logger.info(f"[API_FONT_STYLES-DEBUG] Requested font family: {font_family_name}")
-
-    # Implement robust font family lookup here, similar to get_font_info
-    # to ensure we get the correct 'Noto Sans' map.
-    if font_family_name == 'Noto':
-        font_map_candidates = [
-            FONTS.fonts.get('Noto Sans', {}),
-            FONTS.fonts.get('Noto Serif', {}),
-            FONTS.fonts.get('Noto', {}),
-            FONTS.fonts.get('Noto Color Emoji', {}), # Add to candidates but will be filtered later
-            FONTS.fonts.get('Noto Sans Symbols', {})  # Add to candidates but will be filtered later
-        ]
-    else:
-        font_map_candidates = [FONTS.fonts.get(font_family_name, {})]
-
-    selected_font_map = {}
-    for candidate_map in font_map_candidates:
-        if candidate_map:
-            # Filter out symbol/emoji styles when returning to UI
-            filtered_map = {style: path for style, path in candidate_map.items() 
-                            if "symbols" not in style.lower() and "emoji" not in style.lower() 
-                            and "symbols" not in path.lower() and "emoji" not in path.lower()}
-            # If we find a good general text font family, use its styles and prioritize them
-            if filtered_map:
-                selected_font_map.update(filtered_map)
-
-    # Ensure unique styles and sort them alphabetically, with 'Regular' always first if present
-    unique_styles = sorted(list(selected_font_map.keys()), key=lambda x: (x != 'Regular', x.lower()))
-    
-    current_app.logger.info(f"[API_FONT_STYLES-DEBUG] Returning styles for '{font_family_name}': {unique_styles}")
-    
-    # Return just the keys (styles) for the dropdown, as expected by main.js
-    return jsonify(unique_styles)
+    return FONTS.fonts[font]
 
 
 @bp.route('/api/preview', methods=['POST', 'GET'])
@@ -643,8 +609,6 @@ def get_preview_from_image():
                 if 'pdf_page_count' in context:
                     response_data['pdf_page_count'] = context['pdf_page_count']
                     response_data['pdf_current_page'] = context['pdf_current_page']
-                    current_app.logger.info('[preview] Returning PDF metadata - page %d of %d',
-                                           context['pdf_current_page'], context['pdf_page_count'])
                 return jsonify(response_data)
             else:
                 response_data = {'pages': pages}
@@ -716,81 +680,30 @@ def print_text():
         cut_once = int(request.values.get('cut_once', 0)) == 1
         page_from = int(request.values.get('page_from', 0)) if request.values.get('page_from') else None
         page_to = int(request.values.get('page_to', 0)) if request.values.get('page_to') else None
-        markdown_page = int(request.values.get('markdown_page', 0)) if request.values.get('markdown_page') else None
     except Exception as e:
         return_dict['message'] = str(e)
         current_app.logger.error('Exception happened: %s', e)
         return return_dict
 
-    markdown_sequence = getattr(label, '_markdown_labels', None)
-    pdf_sequence = getattr(label, '_pdf_page_labels', None)
-    label_sequence = markdown_sequence if markdown_sequence else pdf_sequence
-
-    if label_sequence:
-        filtered_sequence = None
-
+    markdown_sequence = getattr(label, '_markdown_labels', None) or getattr(label, '_pdf_page_labels', None)
+    if markdown_sequence:
         # Filter by page range if specified (1-indexed)
         if page_from is not None or page_to is not None:
-            if pdf_sequence:
-                def within_pdf_range(lbl):
-                    page_number = getattr(lbl, '_pdf_original_page_number', None)
-                    if page_number is None:
-                        return True
-                    if page_from is not None and page_number < page_from:
-                        return False
-                    if page_to is not None and page_number > page_to:
-                        return False
-                    return True
-
-                filtered_sequence = [lbl for lbl in pdf_sequence if within_pdf_range(lbl)]
-                if not filtered_sequence:
-                    message = f'No PDF pages found for range {page_from}-{page_to}' if page_to else f'No PDF pages found from {page_from} onwards'
-                    return_dict['message'] = message
-                    return return_dict
-
-                page_numbers = [getattr(lbl, '_pdf_original_page_number', None) for lbl in filtered_sequence]
-                current_app.logger.info('Printing PDF pages %s (requested range %s-%s)', page_numbers, page_from, page_to)
+            total_pages = len(markdown_sequence)
+            start = (page_from - 1) if page_from else 0
+            end = page_to if page_to else total_pages
+            # Clamp to valid range
+            start = max(0, min(start, total_pages - 1))
+            end = max(1, min(end, total_pages))
+            if start < end:
+                filtered_sequence = markdown_sequence[start:end]
+                current_app.logger.info('Printing pages %d-%d of %d total pages', start + 1, end, total_pages)
+                printer.add_label_sequence(filtered_sequence, print_count, cut_once)
             else:
-                total_pages = len(label_sequence)
-                start = (page_from - 1) if page_from else 0
-                end = page_to if page_to else total_pages
-                # Clamp to valid range
-                start = max(0, min(start, total_pages - 1))
-                end = max(1, min(end, total_pages))
-                if start < end:
-                    filtered_sequence = label_sequence[start:end]
-                    current_app.logger.info('Printing pages %d-%d of %d total pages', start + 1, end, total_pages)
-                else:
-                    return_dict['message'] = f'Invalid page range: {page_from}-{page_to}'
-                    return return_dict
+                return_dict['message'] = f'Invalid page range: {page_from}-{page_to}'
+                return return_dict
         else:
-            if pdf_sequence:
-                pdf_page_param = request.values.get('pdf_page')
-                if pdf_page_param:
-                    try:
-                        requested_page = int(pdf_page_param)
-                    except ValueError:
-                        requested_page = None
-                    if requested_page:
-                        filtered_sequence = [
-                            lbl for lbl in pdf_sequence
-                            if getattr(lbl, '_pdf_original_page_number', None) == requested_page
-                        ]
-                        if filtered_sequence:
-                            current_app.logger.info('Printing current PDF page %d (no explicit range)', requested_page)
-            elif markdown_sequence and markdown_page:
-                total_pages = len(markdown_sequence)
-                if total_pages > 0:
-                    index = max(0, min(total_pages - 1, markdown_page - 1))
-                    filtered_sequence = [markdown_sequence[index]]
-                    current_app.logger.info('Printing current markdown page %d of %d (no explicit range)', index + 1, total_pages)
-
-        if filtered_sequence is None:
-            filtered_sequence = label_sequence
-        elif not filtered_sequence:
-            filtered_sequence = label_sequence
-
-        printer.add_label_sequence(filtered_sequence, print_count, cut_once)
+            printer.add_label_sequence(markdown_sequence, print_count, cut_once)
     else:
         printer.add_label_to_queue(label, print_count, cut_once)
 
@@ -818,74 +731,25 @@ def markdown_print_api():
         cut_once = bool(payload.get('cut_once', False))
         page_from = int(payload.get('page_from')) if payload.get('page_from') else None
         page_to = int(payload.get('page_to')) if payload.get('page_to') else None
-        markdown_page = int(payload.get('markdown_page')) if payload.get('markdown_page') else None
 
         printer = create_printer_queue(context['label_size'])
-        markdown_sequence = getattr(label, '_markdown_labels', None)
-        pdf_sequence = getattr(label, '_pdf_page_labels', None)
-        label_sequence = markdown_sequence if markdown_sequence else pdf_sequence
-
-        if label_sequence:
-            filtered_sequence = None
-
+        markdown_sequence = getattr(label, '_markdown_labels', None) or getattr(label, '_pdf_page_labels', None)
+        if markdown_sequence:
+            # Filter by page range if specified (1-indexed)
             if page_from is not None or page_to is not None:
-                if pdf_sequence:
-                    def within_pdf_range(lbl):
-                        page_number = getattr(lbl, '_pdf_original_page_number', None)
-                        if page_number is None:
-                            return True
-                        if page_from is not None and page_number < page_from:
-                            return False
-                        if page_to is not None and page_number > page_to:
-                            return False
-                        return True
-
-                    filtered_sequence = [lbl for lbl in pdf_sequence if within_pdf_range(lbl)]
-                    if not filtered_sequence:
-                        message = f'No PDF pages found for range {page_from}-{page_to}' if page_to else f'No PDF pages found from {page_from} onwards'
-                        return jsonify({'success': False, 'error': message}), 400
-
-                    page_numbers = [getattr(lbl, '_pdf_original_page_number', None) for lbl in filtered_sequence]
-                    current_app.logger.info('Printing PDF pages %s (requested range %s-%s)', page_numbers, page_from, page_to)
+                total_pages = len(markdown_sequence)
+                start = (page_from - 1) if page_from else 0
+                end = page_to if page_to else total_pages
+                start = max(0, min(start, total_pages - 1))
+                end = max(1, min(end, total_pages))
+                if start < end:
+                    filtered_sequence = markdown_sequence[start:end]
+                    current_app.logger.info('Printing pages %d-%d of %d total pages', start + 1, end, total_pages)
+                    printer.add_label_sequence(filtered_sequence, print_count, cut_once)
                 else:
-                    total_pages = len(label_sequence)
-                    start = (page_from - 1) if page_from else 0
-                    end = page_to if page_to else total_pages
-                    start = max(0, min(start, total_pages - 1))
-                    end = max(1, min(end, total_pages))
-                    if start < end:
-                        filtered_sequence = label_sequence[start:end]
-                        current_app.logger.info('Printing pages %d-%d of %d total pages', start + 1, end, total_pages)
-                    else:
-                        return jsonify({'success': False, 'error': f'Invalid page range: {page_from}-{page_to}'}), 400
+                    return jsonify({'success': False, 'error': f'Invalid page range: {page_from}-{page_to}'}), 400
             else:
-                if pdf_sequence:
-                    pdf_page_param = payload.get('pdf_page')
-                    if pdf_page_param:
-                        try:
-                            requested_page = int(pdf_page_param)
-                        except (TypeError, ValueError):
-                            requested_page = None
-                        if requested_page:
-                            filtered_sequence = [
-                                lbl for lbl in pdf_sequence
-                                if getattr(lbl, '_pdf_original_page_number', None) == requested_page
-                            ]
-                            if filtered_sequence:
-                                current_app.logger.info('Printing current PDF page %d (no explicit range)', requested_page)
-                elif markdown_sequence and markdown_page:
-                    total_pages = len(markdown_sequence)
-                    if total_pages > 0:
-                        index = max(0, min(total_pages - 1, markdown_page - 1))
-                        filtered_sequence = [markdown_sequence[index]]
-                        current_app.logger.info('Printing current markdown page %d of %d (no explicit range)', index + 1, total_pages)
-
-            if filtered_sequence is None:
-                filtered_sequence = label_sequence
-            elif not filtered_sequence:
-                filtered_sequence = label_sequence
-
-            printer.add_label_sequence(filtered_sequence, print_count, cut_once)
+                printer.add_label_sequence(markdown_sequence, print_count, cut_once)
         else:
             printer.add_label_to_queue(label, print_count, cut_once)
 
@@ -1081,48 +945,23 @@ def build_label_context_from_request(request):
         'markdown_page_circle': int(d.get('markdown_page_circle', 1)) == 1,
         'markdown_page_number_mm': to_float(d.get('markdown_page_number_mm', None), MARKDOWN_DEFAULT_PAGE_NUMBER_MM),
         'markdown_page_count': int(d.get('markdown_page_count', 1)) == 1,
-        'markdown_page': to_int(d.get('markdown_page', None), 1) if d.get('markdown_page') else None,
         'head_width_px': width,
         'no_crop': int(d.get('no_crop', 0)) == 1,
         'label_width': to_int(d.get('label_width', None), 0),  # Explicit width from remote printer
         'label_height': to_int(d.get('label_height', None), 0),  # Explicit height from remote printer
-        # Border areas with enable flags
-        'enable_left_area': int(d.get('enable_left_area', 0)) == 1,
-        'enable_right_area': int(d.get('enable_right_area', 0)) == 1,
-        'enable_top_area': int(d.get('enable_top_area', 0)) == 1,
-        'enable_bottom_area': int(d.get('enable_bottom_area', 0)) == 1,
-        'enable_left_bar': int(d.get('enable_left_bar', 0)) == 1,
-        'enable_left_text': int(d.get('enable_left_text', 0)) == 1,
-        'enable_right_bar': int(d.get('enable_right_bar', 0)) == 1,
-        'enable_right_text': int(d.get('enable_right_text', 0)) == 1,
-        'enable_top_bar': int(d.get('enable_top_bar', 0)) == 1,
-        'enable_top_text': int(d.get('enable_top_text', 0)) == 1,
-        'enable_bottom_bar': int(d.get('enable_bottom_bar', 0)) == 1,
-        'enable_bottom_text': int(d.get('enable_bottom_text', 0)) == 1,
+        # Border areas
         'left_area_mm': to_float(d.get('left_area_mm', None), 0),
         'right_area_mm': to_float(d.get('right_area_mm', None), 0),
         'top_area_mm': to_float(d.get('top_area_mm', None), 0),
         'bottom_area_mm': to_float(d.get('bottom_area_mm', None), 0),
         'left_bar_mm': to_float(d.get('left_bar_mm', None), 0),
         'right_bar_mm': to_float(d.get('right_bar_mm', None), 0),
-        'top_bar_mm': to_float(d.get('top_bar_mm', None), 0),
-        'bottom_bar_mm': to_float(d.get('bottom_bar_mm', None), 0),
         'left_bar_color': d.get('left_bar_color', 'black'),
         'right_bar_color': d.get('right_bar_color', 'black'),
-        'top_bar_color': d.get('top_bar_color', 'black'),
-        'bottom_bar_color': d.get('bottom_bar_color', 'black'),
         'left_bar_text_size_pt': to_float(d.get('left_bar_text_size_pt', None), 0),
         'right_bar_text_size_pt': to_float(d.get('right_bar_text_size_pt', None), 0),
-        'top_bar_text_size_pt': to_float(d.get('top_bar_text_size_pt', None), 0),
-        'bottom_bar_text_size_pt': to_float(d.get('bottom_bar_text_size_pt', None), 0),
-        'top_text_size_pt': to_float(d.get('top_text_size_pt', None), 0),
-        'bottom_text_size_pt': to_float(d.get('bottom_text_size_pt', None), 0),
-        'left_bar_text': d.get('left_bar_text', ''),
-        'right_bar_text': d.get('right_bar_text', ''),
         'left_text': d.get('left_text', ''),
         'right_text': d.get('right_text', ''),
-        'top_bar_text': d.get('top_bar_text', ''),
-        'bottom_bar_text': d.get('bottom_bar_text', ''),
         'top_text': d.get('top_text', ''),
         'bottom_text': d.get('bottom_text', ''),
         'top_divider': int(d.get('top_divider', 0)) == 1,
@@ -1130,9 +969,7 @@ def build_label_context_from_request(request):
         'bottom_show_page_numbers': int(d.get('bottom_show_page_numbers', 0)) == 1,
         'bottom_page_number_mm': to_float(d.get('bottom_page_number_mm', None), 4),
         'divider_distance_px': to_int(d.get('divider_distance_px', None), 1),
-        'pdf_page': to_int(d.get('pdf_page', None), 1),  # PDF page number for navigation
-        'page_from': to_int(d.get('page_from', None), 0) if d.get('page_from') else None,  # Page range start
-        'page_to': to_int(d.get('page_to', None), 0) if d.get('page_to') else None  # Page range end
+        'pdf_page': to_int(d.get('pdf_page', None), 1)  # PDF page number for navigation
     }
 
     # Debug: log rotation setting
@@ -1197,7 +1034,6 @@ def build_label_context_from_json(data):
         'markdown_page_circle': bool(data.get('page_circle', True)),
         'markdown_page_number_mm': float(data.get('page_number_mm', MARKDOWN_DEFAULT_PAGE_NUMBER_MM)),
         'markdown_page_count': bool(data.get('page_count', True)),
-        'markdown_page': int(data.get('markdown_page', 1)) if data.get('markdown_page') else None,
         'head_width_px': width,
         # Border areas
         'header_left_bar_mm': float(data.get('header_left_bar_mm', 0)),
@@ -1226,67 +1062,13 @@ def create_label_from_context(context, image_file=None):
     def get_font_info(font_family_name, font_style_name):
         try:
             # Treat empty strings as None
-            if not font_family_name:
+            if not font_family_name or not font_style_name:
                 font_family_name = current_app.config['LABEL_DEFAULT_FONT_FAMILY']
-            if not font_style_name:
-                font_style_name = current_app.config['LABEL_DEFAULT_FONT_STYLE'] or 'Regular'
-
-            # Handle common font family inconsistencies (e.g., UI sends 'Noto', but fc-list returns 'Noto Sans')
-            if font_family_name == 'Noto':
-                # Try 'Noto Sans' first, then 'Noto Serif', then just 'Noto'
-                font_map_candidates = [
-                    FONTS.fonts.get('Noto Sans', {}),
-                    FONTS.fonts.get('Noto Serif', {}),
-                    FONTS.fonts.get('Noto', {})
-                ]
-            else:
-                font_map_candidates = [FONTS.fonts.get(font_family_name, {})]
-            
-            resolved_font_path = None
-            resolved_family = font_family_name # Keep original family name for further context
-            resolved_style = font_style_name
-            matched_candidate_map = None
-
-            for candidate_map in font_map_candidates:
-                if not candidate_map: continue
-
-                # Try exact match for style
-                resolved_font_path = candidate_map.get(font_style_name)
-                if resolved_font_path:
-                    matched_candidate_map = candidate_map
-                    resolved_style = font_style_name
-                    break
-
-                # If not found, try fallback to 'Regular' for the same family
-                if font_style_name != 'Regular':
-                    resolved_font_path = candidate_map.get('Regular')
-                    if resolved_font_path:
-                        matched_candidate_map = candidate_map
-                        resolved_style = 'Regular'
-                        break
-
-            if not resolved_font_path:
-                raise LookupError(f"Couldn't find font '{font_family_name}' with style '{font_style_name}' or 'Regular' fallback.")
-
-            # Update resolved_family to the actual family name that provided the font path
-            # This assumes that the font_map_candidates are iterated such that the first match is preferred
-            # If 'Noto Sans' provides the font, we use 'Noto Sans' as the resolved_family
-            for actual_family_name, styles_map in FONTS.fonts.items():
-                if resolved_font_path in styles_map.values():
-                    resolved_family = actual_family_name
-                    break
-
-            # If we still couldn't find a style in the matched candidate, pick the first available
-            if not resolved_style and matched_candidate_map:
-                resolved_style = next(iter(matched_candidate_map.keys()), 'Regular')
-
+                font_style_name = current_app.config['LABEL_DEFAULT_FONT_STYLE']
+            font_path = FONTS.fonts[font_family_name][font_style_name]
         except KeyError:
-            raise LookupError(f"Couldn't find the font family '{font_family_name}'")
-        
-        # Debugging what font info is returned
-        current_app.logger.info(f"[FONT_INFO_DEBUG] Returning font_path='{resolved_font_path}', resolved_family='{resolved_family}', resolved_style='{resolved_style}'")
-        
-        return resolved_font_path, resolved_family, resolved_style
+            raise LookupError("Couldn't find the font & style")
+        return font_path, font_family_name, font_style_name
 
     def get_uploaded_image(image):
         try:
@@ -1325,14 +1107,11 @@ def create_label_from_context(context, image_file=None):
             # First, get page count without rendering
             from app.utils import get_pdf_page_count, pdffile_to_single_page
             page_count = get_pdf_page_count(image)
-            selected_page_numbers = []
 
             # Determine which pages to load based on request
             page_from = context.get('page_from')
             page_to = context.get('page_to')
             pdf_page_param = context.get('pdf_page', 1)
-            current_app.logger.info('[pdf-multipage] Request params - page_from: %s, page_to: %s, pdf_page: %s',
-                                   page_from, page_to, pdf_page_param)
 
             if not page_count:
                 # Fallback: PyPDF2 failed, must load all pages to get count
@@ -1344,12 +1123,11 @@ def create_label_from_context(context, image_file=None):
                     current_app.logger.info('[pdf-multipage] Loaded all %d pages via fallback', page_count)
 
                     # Determine which pages we actually need
-                    if page_from is not None or page_to is not None:
+                    if page_from is not None and page_to is not None:
                         # Page range for printing
-                        start_page = max(1, min(int(page_from), page_count)) - 1 if page_from else 0
-                        end_page = max(1, min(int(page_to), page_count)) if page_to else page_count
+                        start_page = max(1, min(int(page_from), page_count)) - 1
+                        end_page = max(1, min(int(page_to), page_count))
                         pages_to_process = images[start_page:end_page]
-                        selected_page_numbers = list(range(start_page + 1, end_page + 1))
                         current_app.logger.info('[pdf-multipage] Selected pages %d-%d from loaded pages',
                                                start_page + 1, end_page)
                     else:
@@ -1357,7 +1135,6 @@ def create_label_from_context(context, image_file=None):
                         requested_page = int(pdf_page_param) - 1
                         requested_page = max(0, min(requested_page, page_count - 1))
                         pages_to_process = [images[requested_page]]
-                        selected_page_numbers = [requested_page + 1]
                         current_app.logger.info('[pdf-multipage] Selected page %d from loaded pages',
                                                requested_page + 1)
                         context['pdf_page_count'] = page_count
@@ -1372,15 +1149,11 @@ def create_label_from_context(context, image_file=None):
             else:
                 # Efficient path: PyPDF2 worked, load pages one-by-one on demand
                 # Determine which pages to load
-                if page_from is not None or page_to is not None:
+                if page_from is not None and page_to is not None:
                     # Page range for printing
-                    start_page = max(1, min(int(page_from), page_count)) - 1 if page_from else 0  # Convert to 0-indexed
-                    end_page = max(1, min(int(page_to), page_count)) if page_to else page_count  # Keep 1-indexed for range
+                    start_page = max(1, min(int(page_from), page_count)) - 1  # Convert to 0-indexed
+                    end_page = max(1, min(int(page_to), page_count))  # Keep 1-indexed for range
                     pages_to_load = list(range(start_page, end_page))
-                    selected_page_numbers = [page_num + 1 for page_num in pages_to_load]
-                    current_app.logger.info('[pdf-multipage] Page range calculation: page_from=%s, page_to=%s, start_page=%d, end_page=%d',
-                                           page_from, page_to, start_page, end_page)
-                    current_app.logger.info('[pdf-multipage] pages_to_load=%s (count=%d)', pages_to_load, len(pages_to_load))
                     current_app.logger.info('[pdf-multipage] PDF has %d pages, will load pages %d-%d on-demand',
                                            page_count, start_page + 1, end_page)
                 else:
@@ -1388,7 +1161,6 @@ def create_label_from_context(context, image_file=None):
                     requested_page = int(pdf_page_param) - 1
                     requested_page = max(0, min(requested_page, page_count - 1))
                     pages_to_load = [requested_page]
-                    selected_page_numbers = [requested_page + 1]
                     current_app.logger.info('[pdf-multipage] PDF has %d pages, loading page %d for preview',
                                            page_count, requested_page + 1)
                     # Store page metadata for preview response
@@ -1420,80 +1192,79 @@ def create_label_from_context(context, image_file=None):
                     # Process this page immediately before loading the next one
                     # Apply crop and rotate before color conversion
                     img = apply_crop_and_rotate(img)
-                    current_app.logger.info('[pdf-process] After crop_and_rotate: %dx%d', img.width, img.height)
+                        current_app.logger.info('[pdf-process] After crop_and_rotate: %dx%d', img.width, img.height)
 
-                    # Apply color conversion
-                    if context['image_mode'] == 'grayscale':
-                        img = convert_image_to_grayscale(img)
-                    else:
-                        img = convert_image_to_bw(img, context['image_bw_threshold'])
-                    current_app.logger.info('[pdf-process] After color conversion: %dx%d', img.width, img.height)
-
-                    # Apply scaling based on stretch_length and label settings
-                    # Always use content_width_px which accounts for margins
-                    is_rotated = context.get('image_rotate_90', False)
-                    target_width_px = content_width_px
-
-                    current_app.logger.info('[pdf-scale] Before scaling: %dx%d px, is_endless=%s, stretch_length=%s, target_width_px=%d (rotated=%s), content_height_limit_px=%d',
-                                           img.width, img.height, is_endless, stretch_length, target_width_px, is_rotated, content_height_limit_px)
-
-                    if (not is_endless or content_height_limit_px > 0) and not stretch_length:
-                        img = scale_image_to_box(
-                            img,
-                            target_width_px,
-                            content_height_limit_px if content_height_limit_px > 0 else 0
-                        )
-                        current_app.logger.info('[pdf-scale] Used scale_image_to_box, result: %dx%d px', img.width, img.height)
-                    else:
-                        # Scale to fit width only
-                        if target_width_px > 0 and img.width > target_width_px:
-                            scale = target_width_px / img.width
-                            new_size = (
-                                int(round(img.width * scale)),
-                                int(round(img.height * scale))
-                            )
-                            current_app.logger.info('[pdf-scale] Scaling to fit width: scale=%.3f, new_size=%dx%d', scale, new_size[0], new_size[1])
-                            img = img.resize(new_size, resample=RESAMPLE_LANCZOS)
-                            current_app.logger.info('[pdf-scale] After resize: %dx%d', img.width, img.height)
+                        # Apply color conversion
+                        if context['image_mode'] == 'grayscale':
+                            img = convert_image_to_grayscale(img)
                         else:
-                            current_app.logger.info('[pdf-scale] No width scaling needed: img.width=%d <= target_width_px=%d', img.width, target_width_px)
+                            img = convert_image_to_bw(img, context['image_bw_threshold'])
+                        current_app.logger.info('[pdf-process] After color conversion: %dx%d', img.width, img.height)
 
-                        # Crop whitespace if not disabled (but skip for rotated images as it can remove actual content)
-                        no_crop = context.get('no_crop', False)
+                        # Apply scaling based on stretch_length and label settings
+                        # Always use content_width_px which accounts for margins
                         is_rotated = context.get('image_rotate_90', False)
-                        if not no_crop and not is_rotated:
-                            def _crop_white(img_to_crop):
-                                bbox = img_to_crop.convert('L').point(lambda p: 0 if p >= 250 else 255, '1').getbbox()
-                                return img_to_crop.crop(bbox) if bbox else img_to_crop
-                            img = _crop_white(img)
-                            current_app.logger.info('[pdf-scale] After whitespace crop: %dx%d', img.width, img.height)
-                        elif is_rotated:
-                            current_app.logger.info('[pdf-scale] Skipping whitespace crop for rotated image')
+                        target_width_px = content_width_px
 
-                        # Add canvas padding unless stretch_length or rotation is enabled
-                        if not stretch_length and not context.get('image_rotate_90', False):
-                            canvas_width = int(content_width_px)
-                            canvas = Image.new('RGB', (canvas_width, img.height), 'white')
-                            x = max(0, (canvas_width - img.width) // 2)
-                            canvas.paste(img, (x, 0))
-                            img = canvas
-                            current_app.logger.info('[pdf-scale] After canvas padding: %dx%d', img.width, img.height)
+                        current_app.logger.info('[pdf-scale] Before scaling: %dx%d px, is_endless=%s, stretch_length=%s, target_width_px=%d (rotated=%s), content_height_limit_px=%d',
+                                               img.width, img.height, is_endless, stretch_length, target_width_px, is_rotated, content_height_limit_px)
 
-                        current_app.logger.info('[pdf-scale] FINAL image dimensions: %dx%d', img.width, img.height)
+                        if (not is_endless or content_height_limit_px > 0) and not stretch_length:
+                            img = scale_image_to_box(
+                                img,
+                                target_width_px,
+                                content_height_limit_px if content_height_limit_px > 0 else 0
+                            )
+                            current_app.logger.info('[pdf-scale] Used scale_image_to_box, result: %dx%d px', img.width, img.height)
+                        else:
+                            # Scale to fit width only
+                            if target_width_px > 0 and img.width > target_width_px:
+                                scale = target_width_px / img.width
+                                new_size = (
+                                    int(round(img.width * scale)),
+                                    int(round(img.height * scale))
+                                )
+                                current_app.logger.info('[pdf-scale] Scaling to fit width: scale=%.3f, new_size=%dx%d', scale, new_size[0], new_size[1])
+                                img = img.resize(new_size, resample=RESAMPLE_LANCZOS)
+                                current_app.logger.info('[pdf-scale] After resize: %dx%d', img.width, img.height)
+                            else:
+                                current_app.logger.info('[pdf-scale] No width scaling needed: img.width=%d <= target_width_px=%d', img.width, target_width_px)
 
-                    processed_pages.append(img)
-                    current_app.logger.info('[pdf-multipage] Processed page %d/%d', idx + 1, len(pages_to_process))
+                            # Crop whitespace if not disabled (but skip for rotated images as it can remove actual content)
+                            no_crop = context.get('no_crop', False)
+                            is_rotated = context.get('image_rotate_90', False)
+                            if not no_crop and not is_rotated:
+                                def _crop_white(img_to_crop):
+                                    bbox = img_to_crop.convert('L').point(lambda p: 0 if p >= 250 else 255, '1').getbbox()
+                                    return img_to_crop.crop(bbox) if bbox else img_to_crop
+                                img = _crop_white(img)
+                                current_app.logger.info('[pdf-scale] After whitespace crop: %dx%d', img.width, img.height)
+                            elif is_rotated:
+                                current_app.logger.info('[pdf-scale] Skipping whitespace crop for rotated image')
 
-                if not processed_pages:
+                            # Add canvas padding unless stretch_length or rotation is enabled
+                            if not stretch_length and not context.get('image_rotate_90', False):
+                                canvas_width = int(content_width_px)
+                                canvas = Image.new('RGB', (canvas_width, img.height), 'white')
+                                x = max(0, (canvas_width - img.width) // 2)
+                                canvas.paste(img, (x, 0))
+                                img = canvas
+                                current_app.logger.info('[pdf-scale] After canvas padding: %dx%d', img.width, img.height)
+
+                            current_app.logger.info('[pdf-scale] FINAL image dimensions: %dx%d', img.width, img.height)
+
+                        processed_pages.append(img)
+                        current_app.logger.info('[pdf-multipage] Processed page %d/%d', idx + 1, len(pages_to_load))
+
+                    if not processed_pages:
+                        return None
+
+                    current_app.logger.info('[pdf-multipage] Successfully processed %d pages', len(processed_pages))
+                    return processed_pages
+
+                except Exception as page_error:
+                    current_app.logger.error('[pdf-multipage] Error processing pages: %s', str(page_error))
                     return None
-
-                current_app.logger.info('[pdf-multipage] Successfully processed %d pages', len(processed_pages))
-                context['pdf_selected_pages'] = selected_page_numbers
-                return processed_pages
-
-            except Exception as page_error:
-                current_app.logger.error('[pdf-multipage] Error processing pages: %s', str(page_error))
-                return None
 
         except Exception as e:
             current_app.logger.error('[pdf-multipage] Error processing PDF: %s', str(e))
@@ -1787,58 +1558,27 @@ def create_label_from_context(context, image_file=None):
             scaled = add_border_areas(
                 scaled,
                 dpi=DEFAULT_DPI,
-                # Enable flags
-                enable_left_area=context.get('enable_left_area', False),
-                enable_right_area=context.get('enable_right_area', False),
-                enable_top_area=context.get('enable_top_area', False),
-                enable_bottom_area=context.get('enable_bottom_area', False),
-                enable_left_bar=context.get('enable_left_bar', False),
-                enable_left_text=context.get('enable_left_text', False),
-                enable_right_bar=context.get('enable_right_bar', False),
-                enable_right_text=context.get('enable_right_text', False),
-                enable_top_bar=context.get('enable_top_bar', False),
-                enable_top_text=context.get('enable_top_text', False),
-                enable_bottom_bar=context.get('enable_bottom_bar', False),
-                enable_bottom_text=context.get('enable_bottom_text', False),
-                # Area dimensions
                 left_area_mm=context.get('left_area_mm', 0),
                 right_area_mm=context.get('right_area_mm', 0),
                 top_area_mm=context.get('top_area_mm', 0),
                 bottom_area_mm=context.get('bottom_area_mm', 0),
-                # Bar settings
                 left_bar_mm=context.get('left_bar_mm', 0),
                 right_bar_mm=context.get('right_bar_mm', 0),
                 left_bar_color=context.get('left_bar_color', 'black'),
                 right_bar_color=context.get('right_bar_color', 'black'),
-                left_bar_text=context.get('left_bar_text', ''),
-                right_bar_text=context.get('right_bar_text', ''),
-                top_bar_mm=context.get('top_bar_mm', 0),
-                bottom_bar_mm=context.get('bottom_bar_mm', 0),
-                top_bar_color=context.get('top_bar_color', 'black'),
-                bottom_bar_color=context.get('bottom_bar_color', 'black'),
-                top_bar_text=context.get('top_bar_text', ''),
-                bottom_bar_text=context.get('bottom_bar_text', ''),
-                # Text settings
                 left_text=context.get('left_text', ''),
                 right_text=context.get('right_text', ''),
                 top_text=context.get('top_text', ''),
                 bottom_text=context.get('bottom_text', ''),
-                # Font settings
                 font_path=font_path,
                 page_num=idx,
                 total_pages=total_pages,
                 left_bar_text_size_pt=context.get('left_bar_text_size_pt', 0),
                 right_bar_text_size_pt=context.get('right_bar_text_size_pt', 0),
-                top_bar_text_size_pt=context.get('top_bar_text_size_pt', 0),
-                bottom_bar_text_size_pt=context.get('bottom_bar_text_size_pt', 0),
-                top_text_size_pt=context.get('top_text_size_pt', 0),
-                bottom_text_size_pt=context.get('bottom_text_size_pt', 0),
                 default_font_size_pt=font_size_pt,
-                # Dividers
                 top_divider=context.get('top_divider', False),
                 bottom_divider=context.get('bottom_divider', False),
                 divider_distance_px=context.get('divider_distance_px', 1),
-                # Page numbers
                 draw_page_numbers=use_bottom_page_numbers,
                 page_number_circle=True,
                 page_number_mm=context.get('bottom_page_number_mm', 4)
@@ -1990,7 +1730,6 @@ def create_label_from_context(context, image_file=None):
     if 'pdf_page_images' in context and context['pdf_page_images']:
         current_app.logger.info('[create_label] Creating labels for %d PDF pages', len(context['pdf_page_images']))
         labels_sequence = []
-        selected_page_numbers = context.get('pdf_selected_pages') or []
         for idx, page_image in enumerate(context['pdf_page_images']):
             current_app.logger.info('[create_label] PDF page %d image dimensions: %dx%d', idx+1, page_image.width, page_image.height)
             kwargs = dict(base_kwargs)
@@ -2001,10 +1740,7 @@ def create_label_from_context(context, image_file=None):
             if context.get('image_rotate_90', False):
                 current_app.logger.info('[create_label] PDF page %d: Rotated image, using label dimensions with margins', idx+1)
 
-            label_obj = SimpleLabel(**kwargs)
-            original_page_number = selected_page_numbers[idx] if idx < len(selected_page_numbers) else (idx + 1)
-            label_obj._pdf_original_page_number = original_page_number
-            labels_sequence.append(label_obj)
+            labels_sequence.append(SimpleLabel(**kwargs))
 
         for lbl in labels_sequence:
             lbl._pdf_page_labels = labels_sequence

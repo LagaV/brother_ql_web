@@ -84,9 +84,9 @@
                             </div>
 
                             <label for="lineSpacing" class="control-label input-group" style="margin-top: 10px; margin-bottom: 0">Line Spacing:</label>
-                            <div class="btn-group btn-group-toggle btn-block" data-toggle="buttons">
+                            <div class="btn-group btn-group-toggle" data-toggle="buttons" style="display: flex; flex-wrap: wrap;">
                                 {% for line_spacing in line_spacings %}
-                                <label class="btn btn-secondary {% if default_line_spacing == line_spacing %}active{% endif %}" id="lineSpacing{{line_spacing}}">
+                                <label class="btn btn-secondary btn-sm {% if default_line_spacing == line_spacing %}active{% endif %}" id="lineSpacing{{line_spacing}}" style="flex: 0 0 auto; margin: 2px;">
                                     <input type="radio" name="lineSpacing" onchange="preview()" value="{{line_spacing}}" aria-label="{{line_spacing}}%" {% if default_line_spacing == line_spacing %}checked{% endif %}>{{line_spacing}}%
                                 </label>
                                 {% endfor %}
@@ -204,23 +204,23 @@
         <label for="printType" class="control-label input-group" style="margin-bottom: 0">Print Type:</label>
         <div class="btn-group btn-group-toggle btn-block print-type-group" data-toggle="buttons">
             <label class="btn btn-secondary active" id="printTypeText">
-                <input type="radio" name="printType" onchange="preview()" value="text" aria-label="Text" checked>
+                <input type="radio" name="printType" onchange="updateOrientationRestrictions(); preview()" value="text" aria-label="Text" checked>
                 <span class="fas fa-font" aria-hidden="true"></span><br>Text
             </label>
             <label class="btn btn-secondary" id="printTypeQrCode">
-                <input type="radio" name="printType" onchange="preview()" value="qrcode" aria-label="Text">
+                <input type="radio" name="printType" onchange="updateOrientationRestrictions(); preview()" value="qrcode" aria-label="Text">
                 <span class="fas fa-qrcode" aria-hidden="true"></span><br>QR Code
             </label>
             <label class="btn btn-secondary" id="printTypeQrCodeText">
-                <input type="radio" name="printType" onchange="preview()" value="qrcode_text" aria-label="QR & Text">
+                <input type="radio" name="printType" onchange="updateOrientationRestrictions(); preview()" value="qrcode_text" aria-label="QR & Text">
                 <span class="fas fa-qrcode" aria-hidden="true"></span><br>QR &amp; Text
             </label>
             <label class="btn btn-secondary" id="printTypeMarkdown">
-                <input type="radio" name="printType" onchange="preview()" value="markdown" aria-label="MD">
+                <input type="radio" name="printType" onchange="updateOrientationRestrictions(); preview()" value="markdown" aria-label="MD">
                 <span class="fas fa-code" aria-hidden="true"></span><br>MD
             </label>
             <label class="btn btn-secondary" id="printTypeImage">
-                <input type="radio" name="printType" onchange="preview()" value="image" aria-label="Image">
+                <input type="radio" name="printType" onchange="updateOrientationRestrictions(); preview()" value="image" aria-label="Image">
                 <span class="fas fa-image" aria-hidden="true"></span><br>Image
             </label>
         </div>
@@ -228,38 +228,369 @@
         <fieldset class="form-group" id="groupLabelText">
             <label for="labelText" style="margin-top: 10px; margin-bottom: 0">Label Text:</label>
             <textarea rows="7" id="labelText" class="form-control" onChange="preview()" onInput="preview()"></textarea>
-            <button type="button" id="renderMarkdownButton" class="btn btn-secondary btn-block" style="margin-top: 10px; display: none;" onClick="renderMarkdown()">
-                <span class="fas fa-sync" aria-hidden="true"></span> Render Markdown Preview
-            </button>
+            <!-- Streamlined Markdown Controls -->
             <div id="markdownOptions" style="display: none; margin-top: 10px;">
-                <div class="form-check" style="margin-bottom: 10px;">
-                    <input class="form-check-input" type="checkbox" id="markdownAutoRender" onChange="onMarkdownAutoRenderToggle()">
-                    <label class="form-check-label" for="markdownAutoRender">Auto render preview</label>
+                <!-- First Row: Auto + Preview -->
+                <div class="d-flex align-items-center mb-2" style="gap: 0.5rem;">
+                    <label class="btn btn-sm btn-outline-secondary btn-toggle mb-0" id="markdownAutoRenderBtn" title="Auto-render preview on text change">
+                        <input type="checkbox" id="markdownAutoRender" onChange="onMarkdownAutoRenderToggle()">
+                        <span class="fas fa-sync"></span> Auto
+                    </label>
+                    <button type="button" id="renderMarkdownButton" class="btn btn-sm btn-primary" onClick="renderMarkdown()" style="margin-left: auto;">
+                        <span class="fas fa-eye"></span> Preview
+                    </button>
                 </div>
-                <div class="form-check">
-                    <input class="form-check-input" type="checkbox" id="markdownPaged" onChange="onMarkdownPagedToggle()">
-                    <label class="form-check-label" for="markdownPaged">Enable paged mode</label>
-                </div>
-                <div id="markdownPagedInputs" style="display: none; margin-top: 10px;">
-                    <label for="markdownSliceMm" style="margin-bottom: 0">Slice height (mm):</label>
-                    <input id="markdownSliceMm" class="form-control" type="number" min="10" value="90" onChange="preview()">
-                    <label for="markdownFooterMm" style="margin-top: 10px; margin-bottom: 0">Footer height (mm):</label>
-                    <input id="markdownFooterMm" class="form-control" type="number" min="0" value="4" onChange="preview()">
-                    <div class="form-check" style="margin-top: 10px;">
-                        <input class="form-check-input" type="checkbox" id="markdownPageNumbers" onChange="onMarkdownPageNumbersToggle()" checked>
-                        <label class="form-check-label" for="markdownPageNumbers">Show page numbers</label>
+
+                <!-- Second Row: Paged + Height -->
+                <div class="d-flex align-items-center" style="gap: 0.5rem;">
+                    <label class="btn btn-sm btn-outline-secondary btn-toggle mb-0" id="markdownPagedBtn" title="Enable paged mode for long content">
+                        <input type="checkbox" id="markdownPaged" onChange="onMarkdownPagedToggle()">
+                        <span class="fas fa-file-alt"></span> Paged
+                    </label>
+                    <div id="markdownPagedInputs" class="d-flex align-items-center" style="display: none; gap: 0.4rem;">
+                        <label for="markdownSliceMm" class="mb-0" style="font-size: 0.875rem;">Height:</label>
+                        <input id="markdownSliceMm" class="form-control form-control-sm" type="number" min="10" max="999" step="1" value="90" onChange="preview()" style="width: 70px;">
+                        <span style="font-size: 0.875rem; color: #6c757d;">mm</span>
                     </div>
-                    <div id="markdownPageNumberInputs" style="display: none; margin-top: 10px;">
-                        <div class="form-check">
-                            <input class="form-check-input" type="checkbox" id="markdownPageCount" onChange="preview()" checked>
-                            <label class="form-check-label" for="markdownPageCount">Show page total</label>
+                </div>
+                <div class="border-areas-container" style="margin-top: 15px; padding-top: 10px; border-top: 1px solid #dee2e6;">
+                    <label class="section-label" style="font-weight: bold; margin-bottom: 8px;">Border Areas:</label>
+
+                    <!-- Tab Navigation -->
+                    <ul class="nav nav-pills nav-fill border-area-tabs" role="tablist">
+                        <li class="nav-item">
+                            <a class="nav-link active" id="leftAreaTab" data-toggle="tab" href="#leftAreaContent" role="tab">
+                                <span class="fas fa-angle-left"></span> Left
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" id="rightAreaTab" data-toggle="tab" href="#rightAreaContent" role="tab">
+                                <span class="fas fa-angle-right"></span> Right
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" id="topAreaTab" data-toggle="tab" href="#topAreaContent" role="tab">
+                                <span class="fas fa-angle-up"></span> Top
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" id="bottomAreaTab" data-toggle="tab" href="#bottomAreaContent" role="tab">
+                                <span class="fas fa-angle-down"></span> Bottom
+                            </a>
+                        </li>
+                    </ul>
+
+                    <!-- Tab Content -->
+                    <div class="tab-content border-area-content">
+                        <!-- Left Area -->
+                        <div class="tab-pane fade show active" id="leftAreaContent" role="tabpanel">
+                            <div class="form-check border-area-enable-toggle">
+                                <input class="form-check-input" type="checkbox" id="enableLeftArea" onChange="toggleHeaderArea('left'); preview()">
+                                <label class="form-check-label" for="enableLeftArea">Enable Left Area</label>
+                            </div>
+                            <div id="leftAreaOptions" class="border-area-options" style="display: none;">
+                                <!-- Area Sizing -->
+                                <div class="form-group">
+                                    <label for="leftAreaMm" class="small-bold-label">Area Width (mm)</label>
+                                    <input id="leftAreaMm" class="form-control form-control-sm" type="number" min="0" max="999.9" step="0.5" value="0" onChange="preview()">
+                                </div>
+
+                                <!-- Content Type Selector -->
+                                <div class="form-group">
+                                    <label class="small-bold-label">Content Type</label>
+                                    <div class="btn-group btn-group-toggle w-100 content-type-selector" data-toggle="buttons">
+                                        <label class="btn btn-outline-secondary active" id="leftContentNone">
+                                            <input type="radio" name="leftContentType" value="none" onchange="toggleBorderContentType('left', 'none'); preview()" checked>
+                                            <span class="fas fa-ban"></span> None
+                                        </label>
+                                        <label class="btn btn-outline-secondary" id="leftContentBar">
+                                            <input type="radio" name="leftContentType" value="bar" onchange="toggleBorderContentType('left', 'bar'); preview()">
+                                            <span class="fas fa-bars"></span> Bar
+                                        </label>
+                                    </div>
+                                </div>
+
+                                <!-- Bar Settings -->
+                                <div id="leftBarContent" class="border-content-section" style="display: none;">
+                                    <div class="form-row">
+                                        <div class="form-group col-4">
+                                            <label for="leftBarMm">Width (mm)</label>
+                                            <input id="leftBarMm" class="form-control form-control-sm" type="number" min="0" max="999.9" step="0.5" value="0" onChange="preview()">
+                                        </div>
+                                        <div class="form-group col-4">
+                                            <label for="leftBarTextSizePt">Text (pt)</label>
+                                            <input id="leftBarTextSizePt" class="form-control form-control-sm" type="number" min="0" max="999" step="1" value="0" onChange="preview()" placeholder="Auto">
+                                        </div>
+                                        <div class="form-group col-4">
+                                            <label>Color</label>
+                                            <div class="btn-group btn-group-sm btn-group-toggle w-100" data-toggle="buttons">
+                                                <label class="btn btn-outline-dark active" id="leftBarColorBlack">
+                                                    <input type="radio" name="leftBarColor" onchange="preview()" value="black" checked>B
+                                                </label>
+                                                {% if red_support %}
+                                                <label class="btn btn-outline-danger" id="leftBarColorRed">
+                                                    <input type="radio" name="leftBarColor" onchange="preview()" value="red">R
+                                                </label>
+                                                {% endif %}
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="form-group mb-0">
+                                        <label for="leftBarText">Label</label>
+                                        <input id="leftBarText" class="form-control form-control-sm" type="text" value="" onChange="preview()" placeholder="Bar label text">
+                                    </div>
+                                </div>
+
+                                <!-- Text Settings -->
+                                <div id="leftTextContent" class="border-content-section" style="display: none;">
+                                    <div class="form-group mb-0">
+                                        <label for="leftText">Content</label>
+                                        <input id="leftText" class="form-control form-control-sm" type="text" value="" onChange="preview()" placeholder="Text content">
+                                    </div>
+                                </div>
+                            </div>
                         </div>
-                        <div class="form-check">
-                            <input class="form-check-input" type="checkbox" id="markdownPageCircle" onChange="preview()" checked>
-                            <label class="form-check-label" for="markdownPageCircle">Draw circle around number</label>
+
+                        <!-- Right Area -->
+                        <div class="tab-pane fade" id="rightAreaContent" role="tabpanel">
+                            <div class="form-check border-area-enable-toggle">
+                                <input class="form-check-input" type="checkbox" id="enableRightArea" onChange="toggleHeaderArea('right'); preview()">
+                                <label class="form-check-label" for="enableRightArea">Enable Right Area</label>
+                            </div>
+                            <div id="rightAreaOptions" class="border-area-options" style="display: none;">
+                                <!-- Area Sizing -->
+                                <div class="form-group">
+                                    <label for="rightAreaMm" class="small-bold-label">Area Width (mm)</label>
+                                    <input id="rightAreaMm" class="form-control form-control-sm" type="number" min="0" max="999.9" step="0.5" value="0" onChange="preview()">
+                                </div>
+
+                                <!-- Content Type Selector -->
+                                <div class="form-group">
+                                    <label class="small-bold-label">Content Type</label>
+                                    <div class="btn-group btn-group-toggle w-100 content-type-selector" data-toggle="buttons">
+                                        <label class="btn btn-outline-secondary active" id="rightContentNone">
+                                            <input type="radio" name="rightContentType" value="none" onchange="toggleBorderContentType('right', 'none'); preview()" checked>
+                                            <span class="fas fa-ban"></span> None
+                                        </label>
+                                        <label class="btn btn-outline-secondary" id="rightContentBar">
+                                            <input type="radio" name="rightContentType" value="bar" onchange="toggleBorderContentType('right', 'bar'); preview()">
+                                            <span class="fas fa-bars"></span> Bar
+                                        </label>
+                                    </div>
+                                </div>
+
+                                <!-- Bar Settings -->
+                                <div id="rightBarContent" class="border-content-section" style="display: none;">
+                                    <div class="form-row">
+                                        <div class="form-group col-4">
+                                            <label for="rightBarMm">Width (mm)</label>
+                                            <input id="rightBarMm" class="form-control form-control-sm" type="number" min="0" max="999.9" step="0.5" value="0" onChange="preview()">
+                                        </div>
+                                        <div class="form-group col-4">
+                                            <label for="rightBarTextSizePt">Text (pt)</label>
+                                            <input id="rightBarTextSizePt" class="form-control form-control-sm" type="number" min="0" max="999" step="1" value="0" onChange="preview()" placeholder="Auto">
+                                        </div>
+                                        <div class="form-group col-4">
+                                            <label>Color</label>
+                                            <div class="btn-group btn-group-sm btn-group-toggle w-100" data-toggle="buttons">
+                                                <label class="btn btn-outline-dark active" id="rightBarColorBlack">
+                                                    <input type="radio" name="rightBarColor" onchange="preview()" value="black" checked>B
+                                                </label>
+                                                {% if red_support %}
+                                                <label class="btn btn-outline-danger" id="rightBarColorRed">
+                                                    <input type="radio" name="rightBarColor" onchange="preview()" value="red">R
+                                                </label>
+                                                {% endif %}
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="form-group mb-0">
+                                        <label for="rightBarText">Label</label>
+                                        <input id="rightBarText" class="form-control form-control-sm" type="text" value="" onChange="preview()" placeholder="Bar label text">
+                                    </div>
+                                </div>
+
+                                <!-- Text Settings -->
+                                <div id="rightTextContent" class="border-content-section" style="display: none;">
+                                    <div class="form-group mb-0">
+                                        <label for="rightText">Content</label>
+                                        <input id="rightText" class="form-control form-control-sm" type="text" value="" onChange="preview()" placeholder="Text content">
+                                    </div>
+                                </div>
+                            </div>
                         </div>
-                        <label for="markdownPageNumberMm" style="margin-top: 10px; margin-bottom: 0">Page number size (mm):</label>
-                        <input id="markdownPageNumberMm" class="form-control" type="number" min="1" value="4" onChange="preview()">
+
+                        <!-- Top Area -->
+                        <div class="tab-pane fade" id="topAreaContent" role="tabpanel">
+                            <div class="form-check border-area-enable-toggle">
+                                <input class="form-check-input" type="checkbox" id="enableTopArea" onChange="toggleHeaderArea('top'); preview()">
+                                <label class="form-check-label" for="enableTopArea">Enable Top Area</label>
+                            </div>
+                            <div id="topAreaOptions" class="border-area-options" style="display: none;">
+                                <!-- Area Sizing -->
+                                <div class="form-group">
+                                    <label for="topAreaMm" class="small-bold-label">Area Height (mm)</label>
+                                    <input id="topAreaMm" class="form-control form-control-sm" type="number" min="0" max="999.9" step="0.5" value="0" onChange="preview()">
+                                </div>
+
+                                <!-- Content Type Selector -->
+                                <div class="form-group">
+                                    <label class="small-bold-label">Content Type</label>
+                                    <div class="btn-group btn-group-toggle w-100 content-type-selector" data-toggle="buttons">
+                                        <label class="btn btn-outline-secondary active" id="topContentNone">
+                                            <input type="radio" name="topContentType" value="none" onchange="toggleBorderContentType('top', 'none'); preview()" checked>
+                                            <span class="fas fa-ban"></span> None
+                                        </label>
+                                        <label class="btn btn-outline-secondary" id="topContentBar">
+                                            <input type="radio" name="topContentType" value="bar" onchange="toggleBorderContentType('top', 'bar'); preview()">
+                                            <span class="fas fa-bars"></span> Bar
+                                        </label>
+                                        <label class="btn btn-outline-secondary" id="topContentText">
+                                            <input type="radio" name="topContentType" value="text" onchange="toggleBorderContentType('top', 'text'); preview()">
+                                            <span class="fas fa-font"></span> Text
+                                        </label>
+                                    </div>
+                                </div>
+
+                                <!-- Bar Settings -->
+                                <div id="topBarContent" class="border-content-section" style="display: none;">
+                                    <div class="form-row">
+                                        <div class="form-group col-4">
+                                            <label for="topBarMm">Height (mm)</label>
+                                            <input id="topBarMm" class="form-control form-control-sm" type="number" min="0" max="999.9" step="0.5" value="0" onChange="preview()">
+                                        </div>
+                                        <div class="form-group col-4">
+                                            <label for="topBarTextSizePt">Text (pt)</label>
+                                            <input id="topBarTextSizePt" class="form-control form-control-sm" type="number" min="0" max="999" step="1" value="0" onChange="preview()" placeholder="Auto">
+                                        </div>
+                                        <div class="form-group col-4">
+                                            <label class="mb-1">Color</label>
+                                            <div class="btn-group btn-group-sm btn-group-toggle w-100" data-toggle="buttons">
+                                                <label class="btn btn-outline-dark active" id="topBarColorBlack">
+                                                    <input type="radio" name="topBarColor" onchange="preview()" value="black" checked>B
+                                                </label>
+                                                {% if red_support %}
+                                                <label class="btn btn-outline-danger" id="topBarColorRed">
+                                                    <input type="radio" name="topBarColor" onchange="preview()" value="red">R
+                                                </label>
+                                                {% endif %}
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="form-group mb-0">
+                                        <label for="topBarText" class="mb-1">Label</label>
+                                        <input id="topBarText" class="form-control form-control-sm" type="text" value="" onChange="preview()" placeholder="Bar label text">
+                                    </div>
+                                </div>
+
+                                <!-- Text Settings -->
+                                <div id="topTextContent" class="border-content-section" style="display: none;">
+                                    <div class="form-group">
+                                        <label for="topText" class="mb-1">
+                                            Content <i class="fas fa-info-circle text-muted info-tooltip" title="Placeholders: {page}, {pages}, {date}, {time}, {datetime}"></i>
+                                        </label>
+                                        <input id="topText" class="form-control form-control-sm" type="text" value="" onChange="preview()" placeholder="e.g. Page {page} of {pages}">
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="topTextSizePt" class="mb-1">Font Size (pt)</label>
+                                        <input id="topTextSizePt" class="form-control form-control-sm" type="number" min="0" max="999" step="0.1" value="0" onChange="preview()" placeholder="Auto (uses markdown font size)">
+                                    </div>
+                                    <div class="form-check mb-0">
+                                        <input class="form-check-input" type="checkbox" id="topDivider" onChange="preview()">
+                                        <label class="form-check-label" for="topDivider">Separator line</label>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Bottom Area -->
+                        <div class="tab-pane fade" id="bottomAreaContent" role="tabpanel">
+                            <div class="form-check border-area-enable-toggle">
+                                <input class="form-check-input" type="checkbox" id="enableBottomArea" onChange="toggleHeaderArea('bottom'); preview()">
+                                <label class="form-check-label" for="enableBottomArea">Enable Bottom Area</label>
+                            </div>
+                            <div id="bottomAreaOptions" class="border-area-options" style="display: none;">
+                                <!-- Area Sizing -->
+                                <div class="form-group">
+                                    <label for="bottomAreaMm" class="small-bold-label">Area Height (mm)</label>
+                                    <input id="bottomAreaMm" class="form-control form-control-sm" type="number" min="0" max="999.9" step="0.5" value="0" onChange="preview()">
+                                </div>
+
+                                <!-- Content Type Selector -->
+                                <div class="form-group">
+                                    <label class="small-bold-label">Content Type</label>
+                                    <div class="btn-group btn-group-toggle w-100 content-type-selector" data-toggle="buttons">
+                                        <label class="btn btn-outline-secondary active" id="bottomContentNone">
+                                            <input type="radio" name="bottomContentType" value="none" onchange="toggleBorderContentType('bottom', 'none'); preview()" checked>
+                                            <span class="fas fa-ban"></span> None
+                                        </label>
+                                        <label class="btn btn-outline-secondary" id="bottomContentBar">
+                                            <input type="radio" name="bottomContentType" value="bar" onchange="toggleBorderContentType('bottom', 'bar'); preview()">
+                                            <span class="fas fa-bars"></span> Bar
+                                        </label>
+                                        <label class="btn btn-outline-secondary" id="bottomContentText">
+                                            <input type="radio" name="bottomContentType" value="text" onchange="toggleBorderContentType('bottom', 'text'); preview()">
+                                            <span class="fas fa-font"></span> Text
+                                        </label>
+                                    </div>
+                                </div>
+
+                                <!-- Bar Settings -->
+                                <div id="bottomBarContent" class="border-content-section" style="display: none;">
+                                    <div class="form-row">
+                                        <div class="form-group col-4">
+                                            <label for="bottomBarMm">Height (mm)</label>
+                                            <input id="bottomBarMm" class="form-control form-control-sm" type="number" min="0" max="999.9" step="0.5" value="0" onChange="preview()">
+                                        </div>
+                                        <div class="form-group col-4">
+                                            <label for="bottomBarTextSizePt">Text (pt)</label>
+                                            <input id="bottomBarTextSizePt" class="form-control form-control-sm" type="number" min="0" max="999" step="1" value="0" onChange="preview()" placeholder="Auto">
+                                        </div>
+                                        <div class="form-group col-4">
+                                            <label>Color</label>
+                                            <div class="btn-group btn-group-sm btn-group-toggle w-100" data-toggle="buttons">
+                                                <label class="btn btn-outline-dark active" id="bottomBarColorBlack">
+                                                    <input type="radio" name="bottomBarColor" onchange="preview()" value="black" checked>B
+                                                </label>
+                                                {% if red_support %}
+                                                <label class="btn btn-outline-danger" id="bottomBarColorRed">
+                                                    <input type="radio" name="bottomBarColor" onchange="preview()" value="red">R
+                                                </label>
+                                                {% endif %}
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="form-group mb-0">
+                                        <label for="bottomBarText">Label</label>
+                                        <input id="bottomBarText" class="form-control form-control-sm" type="text" value="" onChange="preview()" placeholder="Bar label text">
+                                    </div>
+                                </div>
+
+                                <!-- Text Settings -->
+                                <div id="bottomTextContent" class="border-content-section" style="display: none;">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="bottomDivider" onChange="preview()">
+                                        <label class="form-check-label" for="bottomDivider">Separator line</label>
+                                    </div>
+                                    <div class="form-check mt-2">
+                                        <input class="form-check-input" type="checkbox" id="bottomShowPageNumbers" onChange="onBottomPageNumbersToggle(); preview()">
+                                        <label class="form-check-label" for="bottomShowPageNumbers">Show page numbers</label>
+                                    </div>
+                                    <div id="bottomPageNumberOptions" class="mt-2" style="display: none;">
+                                        <label for="bottomPageNumberMm">Number size (mm)</label>
+                                        <input id="bottomPageNumberMm" class="form-control form-control-sm" type="number" min="1" max="999" value="4" onChange="preview()">
+                                    </div>
+                                    <div id="bottomTextOptions" class="mt-2">
+                                        <label for="bottomText">
+                                            Content <i class="fas fa-info-circle text-muted info-tooltip" title="Placeholders: {time}, {datetime}"></i>
+                                        </label>
+                                        <input id="bottomText" class="form-control form-control-sm" type="text" value="" onChange="preview()" placeholder="e.g. {time}">
+                                        <label for="bottomTextSizePt" class="mt-2">Font Size (pt)</label>
+                                        <input id="bottomTextSizePt" class="form-control form-control-sm" type="number" min="0" max="999" step="0.1" value="0" onChange="preview()" placeholder="Auto (uses markdown font size)">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -268,38 +599,113 @@
             <label style="margin-top: 10px; margin-bottom: 0">Label Image:</label>
             <form class="dropzone" id="my-awesome-dropzone">
             </form>
+
+            <!-- Image controls: Rotate and Crop -->
+            <div style="margin-top: 10px; padding: 10px; background-color: #f8f9fa; border-radius: 4px;">
+                <div id="sourceDimensions" style="display: none; margin-bottom: 8px; padding: 5px; background-color: #e9ecef; border-radius: 3px; font-size: 0.85em;">
+                    Source: <span id="sourceWidth">?</span> × <span id="sourceHeight">?</span> mm
+                </div>
+
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="imageRotate90" onChange="preview()">
+                    <label class="form-check-label" for="imageRotate90">Rotate 90°</label>
+                </div>
+
+                <div class="form-check" style="margin-top: 8px;">
+                    <input class="form-check-input" type="checkbox" id="imageStretchLength" onChange="preview()">
+                    <label class="form-check-label" for="imageStretchLength">Stretch length (no height limit)</label>
+                </div>
+
+                <div class="form-check" style="margin-top: 8px;">
+                    <input class="form-check-input" type="checkbox" id="imageNoCrop" onChange="preview()">
+                    <label class="form-check-label" for="imageNoCrop">Disable whitespace removal</label>
+                </div>
+
+                <label style="margin-top: 10px; margin-bottom: 5px; font-weight: 500;">Crop (mm):</label>
+                <div class="row">
+                    <div class="col-6">
+                        <label for="imageCropLeft" style="margin-bottom: 0; font-size: 0.9em;">Left:</label>
+                        <input id="imageCropLeft" class="form-control form-control-sm" type="number" min="0" max="50" step="0.5" value="0" onChange="preview()">
+                    </div>
+                    <div class="col-6">
+                        <label for="imageCropRight" style="margin-bottom: 0; font-size: 0.9em;">Right:</label>
+                        <input id="imageCropRight" class="form-control form-control-sm" type="number" min="0" max="50" step="0.5" value="0" onChange="preview()">
+                    </div>
+                </div>
+                <div class="row" style="margin-top: 5px;">
+                    <div class="col-6">
+                        <label for="imageCropTop" style="margin-bottom: 0; font-size: 0.9em;">Top:</label>
+                        <input id="imageCropTop" class="form-control form-control-sm" type="number" min="0" max="50" step="0.5" value="0" onChange="preview()">
+                    </div>
+                    <div class="col-6">
+                        <label for="imageCropBottom" style="margin-bottom: 0; font-size: 0.9em;">Bottom:</label>
+                        <input id="imageCropBottom" class="form-control form-control-sm" type="number" min="0" max="50" step="0.5" value="0" onChange="preview()">
+                    </div>
+                </div>
+            </div>
         </fieldset>
     </div>
     <div class="col-md-4">
         <fieldset class="form-group">
             <label for="previewImg" style="margin-bottom: 0">Label Preview:</label><br />
             <img id="previewImg" style="border: 1px solid #ced4da; max-height: 350px; width: auto; max-width: 100%; margin-bottom: 10px;" />
+
+            <!-- Markdown Page Navigation -->
             <div id="markdownPager" class="btn-group btn-group-sm" style="display: none; margin-bottom: 10px;">
                 <button type="button" class="btn btn-secondary" id="markdownPrevPage" onClick="markdownPrevPage()"><span class="fas fa-chevron-left" aria-hidden="true"></span></button>
                 <span class="btn btn-light disabled" id="markdownPageIndicator" style="pointer-events: none;">Page 1 / 1</span>
                 <button type="button" class="btn btn-secondary" id="markdownNextPage" onClick="markdownNextPage()"><span class="fas fa-chevron-right" aria-hidden="true"></span></button>
             </div>
-            <p>Printed size w/o margins: <span id="labelWidth">?</span> cm x <span id="labelHeight">?</span> cm<br>
-               Printhead width: <span id="headWidth">?</span> px</p>
+
+            <!-- PDF Page Navigation -->
+            <div id="pdfPageNavigation" class="btn-group btn-group-sm" style="display: none; margin-bottom: 10px;">
+                <button type="button" class="btn btn-secondary btn-sm" id="pdfPrevPage" onclick="changePdfPage(-1)" style="font-size: 0.875rem;">
+                    <span class="fas fa-chevron-left"></span>
+                </button>
+                <input type="number" id="pdfPageInput" min="1" class="form-control form-control-sm" style="width: 50px; text-align: center; border-radius: 0; font-size: 0.875rem;" onchange="goToPdfPage()" title="Go to page">
+                <span class="btn btn-light btn-sm disabled" id="pdfPageIndicator" style="pointer-events: none; font-size: 0.875rem;">/ <span id="pdfTotalPages" style="font-size: 0.875rem;">1</span></span>
+                <button type="button" class="btn btn-secondary btn-sm" id="pdfNextPage" onclick="changePdfPage(1)" style="font-size: 0.875rem;">
+                    <span class="fas fa-chevron-right"></span>
+                </button>
+            </div>
+
+            <p>Printed size w/o margins: <span id="labelWidth">?</span> cm x <span id="labelHeight">?</span> cm</p>
 
             <div class="form-group">
-                <label for="printerSelect" style="margin-top: 10px; margin-bottom: 0">
-                    Printer:
-                    <a href="/labeldesigner/printers" class="btn btn-sm btn-outline-secondary" style="float: right;" title="Manage Printers">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 10px; margin-bottom: 5px;">
+                    <label for="printerSelect" style="margin-bottom: 0">Printer:</label>
+                    <a href="/labeldesigner/printers" class="btn btn-sm btn-outline-secondary" title="Manage Printers">
                         <span class="fas fa-cog"></span>
                     </a>
-                </label>
+                </div>
                 <select id="printerSelect" class="form-control">
                     <option value="">Loading...</option>
                 </select>
             </div>
 
-            <div class="form-group">
-                <label for="printCount" style="margin-bottom: 0">Print Count:</label>
-                <input id="printCount" class="form-control" type="number" min="1" max="100" value="1" required>
+            <div id="pageRange" class="form-group" style="display: none; margin-bottom: 15px;">
+                <label for="pageFrom" style="margin-bottom: 8px; font-size: 0.9rem; font-weight: 500; display: block;">Page Range:</label>
+                <div class="form-row align-items-center">
+                    <div class="col">
+                        <input id="pageFrom" class="form-control form-control-sm" type="number" min="1" placeholder="From">
+                    </div>
+                    <div class="col">
+                        <input id="pageTo" class="form-control form-control-sm" type="number" min="1" placeholder="To">
+                    </div>
+                    <div class="col-auto" style="margin-top: 2px;">
+                        <button type="button" class="btn btn-outline-secondary btn-sm" id="pageRangeClear" title="Clear page range">
+                            <span class="fas fa-eraser" aria-hidden="true"></span>
+                        </button>
+                    </div>
+                </div>
             </div>
 
-            <div class="btn-group btn-block">
+            <div class="form-group" style="margin-bottom: 10px;">
+                <label for="printCount" style="margin-bottom: 5px; font-size: 0.875rem;">Print Count:</label>
+                <input id="printCount" class="form-control form-control-sm" type="number" min="1" max="100" value="1" required>
+            </div>
+
+            <div class="btn-group btn-block" style="margin-top: 10px;">
                 <button type="button" id="printButton" class="btn btn-block btn-primary btn-lg" onClick="print()">
                     <span class="fas fa-print" aria-hidden="true"></span> Print
                 </button>

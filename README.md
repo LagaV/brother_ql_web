@@ -102,11 +102,14 @@ All in all, the web server offers:
 
 ### Markdown API
 
-You can render markdown directly through the JSON endpoint:
+You can render and print markdown directly through the JSON endpoints:
 
--   `POST /api/markdown/preview`
+-   `POST /api/markdown/preview` – Generate preview images
+-   `POST /api/markdown/print` – Print directly to configured printer
 
-Request body (all values optional unless noted):
+#### Request Parameters
+
+All values are optional unless noted as **Required**.
 
 | Key | Type | Notes |
 | --- | --- | --- |
@@ -118,12 +121,14 @@ Request body (all values optional unless noted):
 | `footer_mm` | float | Extra footer room on each slice (mm); automatically expanded if page numbers are drawn. |
 | `page_numbers` | bool | Show numbering footer (only honored in rotated mode). |
 | `page_circle`, `page_count`, `page_number_mm` | bool/float | Footer styling options. |
+| `page_from`, `page_to` | integer | Print only specific pages/slices (1-indexed). Omit for all pages. |
 | `align` | `left` \\| `center` \\| `right` | Paragraph alignment. |
 | `margins` | object | Optional `{top_mm, bottom_mm, left_mm, right_mm}` overrides. |
 | `font_family`, `font_style`, `font_size` | string / string / float | Fonts must exist in the server's catalog; `font_size` is specified in points. |
 | `line_spacing` | integer | Percentage (100 = single spacing). |
+| `printer_name` | string | Name of printer to use (for `/api/markdown/print` only). |
 
-Response:
+#### Preview Response
 
 ```json
 {
@@ -133,9 +138,80 @@ Response:
 
 Each base64 string is a PNG of one label slice, matching the behaviour of the web preview.
 
+#### Page Range Printing
+
+Use `page_from` and `page_to` to print specific slices from a multi-page markdown document:
+
+-   `page_from=2&page_to=5` – prints pages 2, 3, 4, 5
+-   `page_from=3` – prints from page 3 to end
+-   `page_to=5` – prints from start to page 5
+-   No parameters – prints all pages
+
+#### Border Areas
+
+Add decorative areas with bars and dynamic text to markdown labels. Border areas work **within** the canvas, shrinking the content area accordingly (they don't expand the label).
+
+**Area Configuration:**
+-   `left_area_mm` / `right_area_mm` / `top_area_mm` / `bottom_area_mm` – Reserved space in mm (0-30)
+-   Areas reduce the content area but keep the overall label size unchanged
+
+**Side Bars (Left/Right):**
+-   `left_bar_mm` / `right_bar_mm` – Width of decorative bar within area (0-20 mm)
+-   Left bar aligned to left edge of left area, right bar to right edge of right area
+-   `bar_color` – Color of bars: `black` or `red` (if supported)
+-   `left_text` / `right_text` – White text in bars, centered both vertically and horizontally
+-   `bar_text_size_pt` – Font size for bar text in points (0 = auto-fit to 70% of bar width)
+
+**Text Areas (Top/Bottom):**
+-   `top_text` / `bottom_text` – Black text with variable support
+-   Top text is top-aligned, bottom text is bottom-aligned (both horizontally centered)
+-   Uses default markdown font size
+-   **Note:** When page numbering is enabled, it uses the bottom area (bottom_text is ignored)
+
+**Divider Lines:**
+-   `divider_distance_px` – Distance in pixels from content area to divider line (default: 1)
+-   Divider lines are drawn between header areas and content when areas are configured
+
+**Text Variables:**
+-   `{page}` – Current page number
+-   `{pages}` – Total pages
+-   `{date}` – Current date (dd.MM.yyyy)
+-   `{time}` – Current time (HH:MM)
+-   `{datetime}` – Combined date and time
+
+Example: `Page {page}/{pages} - {date}` → `Page 1/3 - 05.10.2025`
+
 ### Markdown Syntax
 
 The renderer is based on Python-Markdown but tuned for label printing. Supported block features include headings (`#`, `##`, `###`), paragraphs, unordered/ordered lists, fenced code blocks, block quotes, tables with alignment headers, and forced page breaks (`---PAGE---`). Inline emphasis supports bold (`**text**`), italic (`*text*`), bold italic (`***text***`), inline code (`` `code` ``), and nested combinations. The output is rendered at 300 dpi using the selected font family/style and observed margins.
+
+#### HTML Formatting Tags
+
+For extended formatting control, you can use HTML tags within your markdown:
+
+-   `<u>underlined text</u>` – Underline text
+-   `<font size="16">larger text</font>` – Change font size (in points)
+-   `<font color="red">colored text</font>` – Change text color (on compatible label media)
+-   `<sub>subscript</sub>` and `<super>superscript</super>` – Subscript and superscript
+-   `<para alignment="center">centered</para>` – Align paragraphs (left/center/right)
+-   `<br>` or `<br/>` – Explicit line breaks (also works in table cells)
+
+These tags can be combined with standard markdown formatting. Example: `**Bold and <u>underlined</u>**`
+
+#### Tables
+
+Tables are rendered with:
+
+-   **Vertical centering** – All cell content is automatically centered vertically
+-   **Column alignment** – Use `:---`, `:---:`, `---:` in the header separator for left, center, right alignment
+-   **Auto-sizing** – Column widths are calculated automatically based on content
+
+Example:
+```markdown
+| Left | Center | Right |
+|:-----|:------:|------:|
+| A    | B      | C     |
+```
 
 **Tip:** because font sizes are now specified in points, a 12 pt setting produces text roughly 4.2 mm tall on the Brother QL's 300 dpi print head (`12 / 72 * 25.4`).
 
@@ -151,6 +227,22 @@ The application supports managing multiple printers (local and/or remote) throug
 - **Default Printer**: Set a default printer for quick access
 - **Per-Print Selection**: Choose which printer to use for each print job
 - **Persistent Storage**: Printer configurations are stored in `/app/instance/printers.json` (persist with Docker volumes)
+- **Auto-Detection**: Automatically detects media type and size from compatible printers (QL-700+, QL-800+, QL-1100+)
+
+#### Automatic Media Detection
+
+The application can automatically detect the currently loaded label size and media type from compatible Brother QL printers. This feature uses a three-tier fallback system:
+
+1. **Auto-detect from printer** (if supported) - Queries the printer via status command to detect loaded media
+2. **Last-used settings** - Falls back to the last manually selected label size (stored in browser localStorage)
+3. **Server defaults** - Uses the configured default label size if no previous settings exist
+
+**Compatibility:**
+- **Newer models** (QL-700, QL-800, QL-810W, QL-820NWB, QL-1100, QL-1110NWB, QL-1115NWB) support status queries via USB, network (TCP), and some via PyUSB backends
+- **Older models** (QL-500, QL-550, QL-570, QL-600) do not support status queries and automatically fall back to saved/default settings
+- **Remote printers** can be queried if the remote instance also supports the `/api/printer/status` endpoint
+
+The system automatically learns which printers support status queries and caches this information to avoid unnecessary query attempts on incompatible models.
 
 #### Managing Printers
 

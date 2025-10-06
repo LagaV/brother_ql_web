@@ -56,7 +56,8 @@ class SimpleLabel:
             image=None,
             font_path='',
             font_size=70,
-            line_spacing=100):
+            line_spacing=100,
+            pre_rotated=False):  # For markdown images that are already landscape
         self._width = width
         self._height = height
         self.label_content = label_content
@@ -72,6 +73,7 @@ class SimpleLabel:
         self._font_path = font_path
         self._font_size = font_size
         self._line_spacing = line_spacing
+        self.pre_rotated = pre_rotated
 
     @property
     def label_content(self):
@@ -139,10 +141,24 @@ class SimpleLabel:
 
         if self._label_orientation == LabelOrientation.STANDARD:
             if self._label_type in (LabelType.ENDLESS_LABEL,):
-                height = img_height + textsize[3] - textsize[1] + margin_top + margin_bottom
+                # Auto-resize height to match content
+                # But NOT for pre-rotated images (already have correct dimensions)
+                if not self.pre_rotated:
+                    old_height = height
+                    height = img_height + textsize[3] - textsize[1] + margin_top + margin_bottom
+                    if self._label_content == LabelContent.MARKDOWN_IMAGE:
+                        print(f"[label.py] STANDARD endless: {old_height} -> {height}, img={img_width}x{img_height}")
         elif self._label_orientation == LabelOrientation.ROTATED:
             if self._label_type in (LabelType.ENDLESS_LABEL,):
-                width = img_width + textsize[2] + margin_left + margin_right
+                # Auto-resize width to match content
+                # But NOT for pre-rotated images (landscape images with fixed dimensions)
+                old_width = width
+                if not self.pre_rotated:
+                    width = img_width + textsize[2] + margin_left + margin_right
+                    if self._label_content == LabelContent.MARKDOWN_IMAGE:
+                        print(f"[label.py] ROTATED endless: pre_rotated={self.pre_rotated}, {old_width} -> {width}, img={img_width}x{img_height}")
+                else:
+                    print(f"[label.py] ROTATED endless pre-rotated: keeping {old_width}, img={img_width}x{img_height}")
 
         if self._label_orientation == LabelOrientation.STANDARD:
             if self._label_type in (LabelType.DIE_CUT_LABEL, LabelType.ROUND_DIE_CUT_LABEL):
@@ -153,7 +169,10 @@ class SimpleLabel:
 
             vertical_offset_text += img_height
             horizontal_offset_text = max((width - textsize[2])//2, 0)
-            if self._label_content == LabelContent.MARKDOWN_IMAGE:
+            # For image content (including PDFs), respect left margin instead of centering
+            if self._label_content in (LabelContent.MARKDOWN_IMAGE, LabelContent.IMAGE_BW,
+                                       LabelContent.IMAGE_GRAYSCALE, LabelContent.IMAGE_RED_BLACK,
+                                       LabelContent.IMAGE_COLORED):
                 horizontal_offset_image = margin_left
             else:
                 horizontal_offset_image = (width - img_width)//2
@@ -172,6 +191,9 @@ class SimpleLabel:
 
         text_offset = horizontal_offset_text, vertical_offset_text - textsize[1]
         image_offset = horizontal_offset_image, vertical_offset_image
+
+        if self._label_content == LabelContent.MARKDOWN_IMAGE:
+            print(f"[label.py] Creating canvas: {int(width)}x{int(height)}, img={img_width}x{img_height}, orientation={self._label_orientation}")
 
         imgResult = Image.new('RGB', (int(width), int(height)), 'white')
 

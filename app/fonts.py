@@ -25,6 +25,7 @@ class Fonts:
                 fontname = font[1].replace('\\', '')
                 fontpath = font[0].strip()
                 fontstyle = font[2][6:].strip().split(',')[0]
+                # Debug: print(f"[FONTS-DEBUG] Raw font data: fontname='{fontname}', fontstyle='{fontstyle}', fontpath='{fontpath}'")
 
                 if ',' in fontname:
                     fontname = fontname.split()[0]

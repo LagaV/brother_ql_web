@@ -3,6 +3,12 @@ var imageDropZone;
 var markdownRenderInFlight = false;
 var pendingFontStyle = null;
 
+// PDF page navigation state
+var pdfCurrentPage = 1;
+var pdfTotalPages = 1;
+var isPdfLoaded = false;
+var uploadedImageFile = null;  // Store reference to uploaded file for page navigation
+
 function updateHeadWidth() {
     var option = $("#labelSize option:selected");
     var width = option.data("head-width");
@@ -47,6 +53,13 @@ function formData(cut_once) {
         qrcode_correction: $('#qrCodeCorrection').val(),
         image_bw_threshold: $('#imageBwThreshold').val(),
         image_mode:         getCheckedValue('imageMode'),
+        image_rotate_90:    $('#imageRotate90').is(':checked') ? 1 : 0,
+        image_stretch_length: $('#imageStretchLength').is(':checked') ? 1 : 0,
+        no_crop:            $('#imageNoCrop').is(':checked') ? 1 : 0,
+        image_crop_left:    $('#imageCropLeft').val() || 0,
+        image_crop_right:   $('#imageCropRight').val() || 0,
+        image_crop_top:     $('#imageCropTop').val() || 0,
+        image_crop_bottom:  $('#imageCropBottom').val() || 0,
         print_count:       $('#printCount').val(),
         line_spacing:      getCheckedValue('lineSpacing'),
         cut_once:          cut_once ? 1 : 0,
@@ -57,11 +70,96 @@ function formData(cut_once) {
     }
     data.markdown_paged = markdownPagedEnabled() ? 1 : 0;
     data.markdown_slice_mm = $('#markdownSliceMm').val();
-    data.markdown_footer_mm = $('#markdownFooterMm').val();
     data.markdown_page_numbers = markdownPageNumbersEnabled() ? 1 : 0;
     data.markdown_page_circle = $('#markdownPageCircle').is(':checked') ? 1 : 0;
     data.markdown_page_number_mm = $('#markdownPageNumberMm').val();
     data.markdown_page_count = $('#markdownPageCount').is(':checked') ? 1 : 0;
+
+    // Unified page range handling for both markdown and PDF
+    var pageFrom = $('#pageFrom').val();
+    var pageTo = $('#pageTo').val();
+
+    if (isPdfLoaded) {
+        // PDF mode: use page range for printing, pdf_page for preview
+        if (typeof dropZoneMode !== 'undefined' && dropZoneMode === 'print') {
+            console.log('[formData] Print mode - PDF page range:', pageFrom, '-', pageTo);
+            if (pageFrom && pageTo) {
+                data.page_from = pageFrom;
+                data.page_to = pageTo;
+                console.log('[formData] Sending page_from:', pageFrom, 'page_to:', pageTo);
+            } else {
+                data.pdf_page = pdfCurrentPage;
+                console.log('[formData] No range specified, sending pdf_page:', pdfCurrentPage);
+            }
+        } else {
+            // Preview mode - use current page
+            data.pdf_page = pdfCurrentPage;
+            console.log('[formData] Preview mode - sending pdf_page:', pdfCurrentPage);
+        }
+    } else {
+        // Markdown mode: use page range if specified
+        if (pageFrom) {
+            data.page_from = pageFrom;
+        }
+        if (pageTo) {
+            data.page_to = pageTo;
+        }
+    }
+
+    // Track current markdown preview page so empty range prints the visible page
+    if (getCheckedValue('printType') === 'markdown') {
+        if (markdownPreviewPages.length > 0) {
+            data.markdown_page = markdownCurrentPage + 1;
+        } else {
+            data.markdown_page = 1;
+        }
+    }
+
+    // Border areas for markdown - with enable flags
+    data.enable_left_area = $('#enableLeftArea').is(':checked') ? 1 : 0;
+    data.enable_right_area = $('#enableRightArea').is(':checked') ? 1 : 0;
+    data.enable_top_area = $('#enableTopArea').is(':checked') ? 1 : 0;
+    data.enable_bottom_area = $('#enableBottomArea').is(':checked') ? 1 : 0;
+    data.enable_left_bar = (getCheckedValue('leftContentType') === 'bar') ? 1 : 0;
+    data.enable_left_text = (getCheckedValue('leftContentType') === 'text') ? 1 : 0;
+    data.enable_right_bar = (getCheckedValue('rightContentType') === 'bar') ? 1 : 0;
+    data.enable_right_text = (getCheckedValue('rightContentType') === 'text') ? 1 : 0;
+    data.enable_top_bar = (getCheckedValue('topContentType') === 'bar') ? 1 : 0;
+    data.enable_top_text = (getCheckedValue('topContentType') === 'text') ? 1 : 0;
+    data.enable_bottom_bar = (getCheckedValue('bottomContentType') === 'bar') ? 1 : 0;
+    data.enable_bottom_text = (getCheckedValue('bottomContentType') === 'text') ? 1 : 0;
+    
+    data.left_area_mm = $('#enableLeftArea').is(':checked') ? ($('#leftAreaMm').val() || 0) : 0;
+    data.right_area_mm = $('#enableRightArea').is(':checked') ? ($('#rightAreaMm').val() || 0) : 0;
+    data.top_area_mm = $('#enableTopArea').is(':checked') ? ($('#topAreaMm').val() || 0) : 0;
+    data.bottom_area_mm = $('#enableBottomArea').is(':checked') ? ($('#bottomAreaMm').val() || 0) : 0;
+    data.left_bar_mm = $('#enableLeftArea').is(':checked') ? ($('#leftBarMm').val() || 0) : 0;
+    data.right_bar_mm = $('#enableRightArea').is(':checked') ? ($('#rightBarMm').val() || 0) : 0;
+    data.top_bar_mm = $('#enableTopArea').is(':checked') ? ($('#topBarMm').val() || 0) : 0;
+    data.bottom_bar_mm = $('#enableBottomArea').is(':checked') ? ($('#bottomBarMm').val() || 0) : 0;
+    data.left_bar_text_size_pt = $('#enableLeftArea').is(':checked') ? ($('#leftBarTextSizePt').val() || 0) : 0;
+    data.right_bar_text_size_pt = $('#enableRightArea').is(':checked') ? ($('#rightBarTextSizePt').val() || 0) : 0;
+    data.top_bar_text_size_pt = $('#enableTopArea').is(':checked') ? ($('#topBarTextSizePt').val() || 0) : 0;
+    data.bottom_bar_text_size_pt = $('#enableBottomArea').is(':checked') ? ($('#bottomBarTextSizePt').val() || 0) : 0;
+    data.top_text_size_pt = $('#enableTopArea').is(':checked') ? ($('#topTextSizePt').val() || 0) : 0;
+    data.bottom_text_size_pt = $('#enableBottomArea').is(':checked') ? ($('#bottomTextSizePt').val() || 0) : 0;
+    data.left_bar_color = $('#enableLeftArea').is(':checked') ? (getCheckedValue('leftBarColor') || 'black') : 'black';
+    data.right_bar_color = $('#enableRightArea').is(':checked') ? (getCheckedValue('rightBarColor') || 'black') : 'black';
+    data.top_bar_color = $('#enableTopArea').is(':checked') ? (getCheckedValue('topBarColor') || 'black') : 'black';
+    data.bottom_bar_color = $('#enableBottomArea').is(':checked') ? (getCheckedValue('bottomBarColor') || 'black') : 'black';
+    data.left_bar_text = $('#enableLeftArea').is(':checked') ? ($('#leftBarText').val() || '') : '';
+    data.right_bar_text = $('#enableRightArea').is(':checked') ? ($('#rightBarText').val() || '') : '';
+    data.left_text = $('#enableLeftArea').is(':checked') ? ($('#leftText').val() || '') : '';
+    data.right_text = $('#enableRightArea').is(':checked') ? ($('#rightText').val() || '') : '';
+    data.top_bar_text = $('#enableTopArea').is(':checked') ? ($('#topBarText').val() || '') : '';
+    data.bottom_bar_text = $('#enableBottomArea').is(':checked') ? ($('#bottomBarText').val() || '') : '';
+    data.top_text = $('#enableTopArea').is(':checked') ? ($('#topText').val() || '') : '';
+    data.bottom_text = $('#enableBottomArea').is(':checked') && !$('#bottomShowPageNumbers').is(':checked') ? ($('#bottomText').val() || '') : '';
+    data.top_divider = $('#enableTopArea').is(':checked') && $('#topDivider').is(':checked') ? 1 : 0;
+    data.bottom_divider = $('#enableBottomArea').is(':checked') && $('#bottomDivider').is(':checked') ? 1 : 0;
+    data.bottom_show_page_numbers = $('#enableBottomArea').is(':checked') && $('#bottomShowPageNumbers').is(':checked') ? 1 : 0;
+    data.bottom_page_number_mm = $('#bottomPageNumberMm').val() || 4;
+
     return data;
 }
 
@@ -78,32 +176,40 @@ function updatePreview(data) {
 function updateStyles() {
     var font_family = $('#fontFamily option:selected').text();
 
+    // When 'Noto' is selected, specifically request 'Noto Sans' from the backend
+    // This ensures we get the general text font, not symbol fonts.
+    var requested_font_family = font_family;
+    if (font_family === 'Noto') {
+        requested_font_family = 'Noto Sans';
+    }
+
     $.ajax({
         type:        'POST',
         url:         '{{url_for('.get_font_styles')}}',
-        contentType: 'application/x-www-form-urlencoded; charset=UTF-8',
-        data:        {font: font_family},
-        success: function(data) {
+        contentType: 'application\/x-www-form-urlencoded; charset=UTF-8',
+        data:        {font: requested_font_family},
+        success: function(data) { // 'data' is now an array of style names (JSON array)
             var styleSelect = $('#fontStyle');
             styleSelect.empty();
 
-            var firstKey = null;
-            $.each(data, function(key) {
-                styleSelect.append($("<option></option>").attr("value", key).text(key));
-                if (firstKey === null) {
-                    firstKey = key;
+            var firstStyle = null;
+            $.each(data, function(index, styleName) { // Iterate over array
+                styleSelect.append($("<option></option>").attr("value", styleName).text(styleName));
+                if (firstStyle === null) {
+                    firstStyle = styleName;
                 }
             });
 
             var desired = null;
-            if (pendingFontStyle && Object.prototype.hasOwnProperty.call(data, pendingFontStyle)) {
+            if (pendingFontStyle && data.includes(pendingFontStyle)) {
                 desired = pendingFontStyle;
-            } else if (Object.prototype.hasOwnProperty.call(data, 'Book')) {
-                desired = 'Book';
-            } else if (Object.prototype.hasOwnProperty.call(data, 'Regular')) {
+            // Prioritize 'Regular' or 'Book' if available and no pending style
+            } else if (data.includes('Regular')) {
                 desired = 'Regular';
+            } else if (data.includes('Book')) {
+                desired = 'Book';
             } else {
-                desired = firstKey;
+                desired = firstStyle;
             }
 
             pendingFontStyle = null;
@@ -120,20 +226,127 @@ function toggleMarkdownButton(show) {
     if (!button.length) {
         return;
     }
-    if (show && markdownAutoRenderEnabled()) {
-        button.hide();
-        if (markdownRenderInFlight) {
+    // Show/hide button based on mode and auto-render state
+    if (show) {
+        if (markdownAutoRenderEnabled()) {
+            button.hide(); // Hide when auto-render is enabled
+        } else {
+            button.show();
+            button.removeClass('btn-outline-secondary').addClass('btn-primary');
+            button.prop('disabled', false);
+            button.removeAttr('title');
+        }
+        if (markdownRenderInFlight && markdownAutoRenderEnabled()) {
             finishMarkdownRenderFeedback();
         }
-        return;
-    }
-    if (show) {
-        button.show();
     } else {
         if (markdownRenderInFlight) {
             finishMarkdownRenderFeedback();
         }
         button.hide();
+    }
+}
+
+function toggleHeaderArea(area) {
+    var checkbox = $('#enable' + area.charAt(0).toUpperCase() + area.slice(1) + 'Area');
+    var options = $('#' + area + 'AreaOptions');
+    if (checkbox.is(':checked')) {
+        options.show();
+    } else {
+        options.hide();
+    }
+}
+
+function toggleBorderContent(area, type) {
+    // area: 'left', 'right', 'top', 'bottom'
+    // type: 'bar', 'text'
+    var checkbox = $('#enable' + area.charAt(0).toUpperCase() + area.slice(1) + type.charAt(0).toUpperCase() + type.slice(1));
+    var content = $('#' + area + type.charAt(0).toUpperCase() + type.slice(1) + 'Content');
+    var otherType = (type === 'bar') ? 'text' : 'bar';
+    var otherCheckbox = $('#enable' + area.charAt(0).toUpperCase() + area.slice(1) + otherType.charAt(0).toUpperCase() + otherType.slice(1));
+    var otherContent = $('#' + area + otherType.charAt(0).toUpperCase() + otherType.slice(1) + 'Content');
+
+    if (checkbox.is(':checked')) {
+        // Show this content
+        content.show();
+        // Uncheck and hide the other type (mutual exclusivity)
+        otherCheckbox.prop('checked', false);
+        otherContent.hide();
+    } else {
+        // Hide this content
+        content.hide();
+    }
+}
+
+function toggleBorderContentType(area, type) {
+    // area: 'left', 'right', 'top', 'bottom'
+    // type: 'none', 'bar', 'text'
+    var barContent = $('#' + area + 'BarContent');
+    var textContent = $('#' + area + 'TextContent');
+
+    // If selecting bar or text, automatically enable the area if not already enabled
+    if (type !== 'none') {
+        var enableCheckbox = $('#enable' + area.charAt(0).toUpperCase() + area.slice(1) + 'Area');
+        if (!enableCheckbox.is(':checked')) {
+            enableCheckbox.prop('checked', true);
+            toggleHeaderArea(area);  // Show the options panel
+        }
+    }
+
+    // Remove active class from all buttons
+    $('#' + area + 'ContentNone').removeClass('active');
+    $('#' + area + 'ContentBar').removeClass('active');
+    $('#' + area + 'ContentText').removeClass('active');
+
+    // Add active class to selected button
+    if (type === 'none') {
+        $('#' + area + 'ContentNone').addClass('active');
+    } else if (type === 'bar') {
+        $('#' + area + 'ContentBar').addClass('active');
+    } else if (type === 'text') {
+        $('#' + area + 'ContentText').addClass('active');
+    }
+
+    // Hide all content sections
+    barContent.hide();
+    textContent.hide();
+
+    // Show selected content section and set default values if needed
+    if (type === 'bar') {
+        barContent.show();
+        // Set default bar width if currently 0
+        var barWidthField = $('#' + area + 'BarMm');
+        if (parseFloat(barWidthField.val()) === 0) {
+            var isVertical = (area === 'left' || area === 'right');
+            barWidthField.val(isVertical ? '5' : '3');
+        }
+        // Set default area width if currently 0
+        var areaWidthField = $('#' + area + 'AreaMm');
+        if (parseFloat(areaWidthField.val()) === 0) {
+            var isVertical = (area === 'left' || area === 'right');
+            areaWidthField.val(isVertical ? '10' : '8');
+        }
+        console.log('Set default bar values for ' + area + ': area=' + areaWidthField.val() + 'mm, bar=' + barWidthField.val() + 'mm');
+    } else if (type === 'text') {
+        textContent.show();
+        // Set default area width if currently 0
+        var areaWidthField = $('#' + area + 'AreaMm');
+        if (parseFloat(areaWidthField.val()) === 0) {
+            var isVertical = (area === 'left' || area === 'right');
+            areaWidthField.val(isVertical ? '10' : '8');
+        }
+        console.log('Set default text values for ' + area + ': area=' + areaWidthField.val() + 'mm');
+    }
+    // If 'none', both remain hidden
+}
+
+function onBottomPageNumbersToggle() {
+    if ($('#bottomShowPageNumbers').is(':checked')) {
+        $('#bottomPageNumberOptions').show();
+        $('#bottomTextOptions').hide();
+    } else {
+        $('#bottomPageNumberOptions').hide();
+        $('#bottomTextOptions').show();
     }
 }
 
@@ -144,13 +357,41 @@ function toggleMarkdownOptions(show) {
     }
     if (show) {
         container.show();
+        $('#pageRange').show();
     } else {
         container.hide();
         $('#markdownPagedInputs').hide();
         $('#markdownPageNumberInputs').hide();
+        if (!(getCheckedValue('printType') === 'image' && isPdfLoaded)) {
+            $('#pageRange').hide();
+        }
     }
     enforceMarkdownPagingRules();
     updateMarkdownPager();
+}
+
+function updateOrientationRestrictions() {
+    var printType = getCheckedValue('printType');
+    var isImage = (printType === 'image');
+
+    // Disable rotated mode for images (use rotate 90° instead)
+    if (isImage) {
+        var rotatedBtn = $('#orientation_rotated');
+        rotatedBtn.addClass('disabled').prop('disabled', true);
+        rotatedBtn.find('input').prop('disabled', true);
+
+        // If rotated was selected, switch to standard
+        if (getCheckedValue('orientation') === 'rotated') {
+            $('#orientation_standard').addClass('active').find('input').prop('checked', true);
+            $('#orientation_rotated').removeClass('active');
+            preview();
+        }
+    } else {
+        // Enable rotated mode for other types
+        var rotatedBtn = $('#orientation_rotated');
+        rotatedBtn.removeClass('disabled').prop('disabled', false);
+        rotatedBtn.find('input').prop('disabled', false);
+    }
 }
 
 function markdownAutoRenderEnabled() {
@@ -234,10 +475,31 @@ function markdownPagedEnabled() {
 }
 
 function onMarkdownPagedToggle() {
+    var btn = $('#markdownPagedBtn');
+    var checkbox = $('#markdownPaged');
+
+    if (checkbox.is(':checked')) {
+        btn.addClass('active');
+        $('#markdownPagedInputs').show();
+    } else {
+        btn.removeClass('active');
+        $('#markdownPagedInputs').hide();
+    }
+
     enforceMarkdownPagingRules();
+    preview();
 }
 
 function onMarkdownAutoRenderToggle() {
+    var btn = $('#markdownAutoRenderBtn');
+    var checkbox = $('#markdownAutoRender');
+
+    if (checkbox.is(':checked')) {
+        btn.addClass('active');
+    } else {
+        btn.removeClass('active');
+    }
+
     schedulePersist();
     toggleMarkdownButton(getCheckedValue('printType') === 'markdown');
     if (markdownAutoRenderEnabled()) {
@@ -274,7 +536,7 @@ function startMarkdownRenderFeedback() {
         markdownButtonResetTimer = null;
     }
     button.prop('disabled', true);
-    button.html('<span class="fas fa-sync fa-spin" aria-hidden="true"></span> Rendering Markdown...');
+    button.html('<span class="fas fa-sync fa-spin" aria-hidden="true"></span> Rendering...');
     markdownRenderInFlight = true;
 }
 
@@ -287,14 +549,92 @@ function finishMarkdownRenderFeedback(messageHtml) {
     if (html) {
         button.html(html);
     }
-    button.prop('disabled', false);
+    // Re-apply disabled state if auto-render is enabled
+    if (markdownAutoRenderEnabled()) {
+        button.prop('disabled', true);
+    } else {
+        button.prop('disabled', false);
+    }
     markdownRenderInFlight = false;
 }
 
-function clearMarkdownPreviewState() {
+function clearMarkdownPreviewState(options) {
+    var keepPageRange = options && options.keepPageRange;
     markdownPreviewPages = [];
     markdownCurrentPage = 0;
     updateMarkdownPager();
+    if (!keepPageRange) {
+        $('#pageRange').hide();
+    }
+}
+
+function normalizePageRange(totalPages) {
+    var fromInput = $('#pageFrom');
+    var toInput = $('#pageTo');
+    if (!fromInput.length || !toInput.length) {
+        return;
+    }
+
+    var total = parseInt(totalPages, 10);
+    if (isNaN(total) || total < 1) {
+        return;
+    }
+
+    var fromRaw = fromInput.val();
+    var toRaw = toInput.val();
+    var hasFrom = fromRaw !== '' && fromRaw !== null;
+    var hasTo = toRaw !== '' && toRaw !== null;
+
+    if (!hasFrom && !hasTo) {
+        return;
+    }
+
+    var fromVal = parseInt(fromRaw, 10);
+    var toVal = parseInt(toRaw, 10);
+    var fromInRange = hasFrom && !isNaN(fromVal) && fromVal >= 1 && fromVal <= total;
+    var toInRange = hasTo && !isNaN(toVal) && toVal >= 1 && toVal <= total;
+
+    if (hasFrom && hasTo && !fromInRange && !toInRange) {
+        fromInput.val('');
+        toInput.val('');
+        return;
+    }
+
+    if (hasFrom) {
+        if (isNaN(fromVal)) {
+            fromVal = 1;
+        }
+        fromVal = Math.min(Math.max(fromVal, 1), total);
+        fromInput.val(fromVal);
+    }
+
+    if (hasTo) {
+        if (isNaN(toVal)) {
+            toVal = total;
+        }
+        toVal = Math.min(Math.max(toVal, 1), total);
+        toInput.val(toVal);
+    }
+
+    var adjustedFrom = parseInt(fromInput.val(), 10);
+    var adjustedTo = parseInt(toInput.val(), 10);
+
+    if (!isNaN(adjustedFrom) && !isNaN(adjustedTo) && adjustedFrom > adjustedTo) {
+        if (hasFrom && hasTo) {
+            fromInput.val(Math.min(adjustedFrom, adjustedTo));
+            toInput.val(Math.max(adjustedFrom, adjustedTo));
+        } else if (hasFrom) {
+            toInput.val(adjustedFrom);
+        } else if (hasTo) {
+            fromInput.val(adjustedTo);
+        }
+    }
+}
+
+function clearPageRangeInputs() {
+    $('#pageFrom').val('');
+    $('#pageTo').val('');
+    schedulePersist();
 }
 
 function normalizePreviewPages(raw) {
@@ -321,8 +661,13 @@ function normalizePreviewPages(raw) {
         return raw;
     }
 
-    if (typeof raw === 'object' && raw !== null && Array.isArray(raw.pages)) {
-        return raw.pages;
+    if (typeof raw === 'object' && raw !== null) {
+        if (Array.isArray(raw.pages)) {
+            return raw.pages;
+        }
+        if (raw.image) {
+            return [raw.image];
+        }
     }
 
     return [];
@@ -370,20 +715,54 @@ function markdownNextPage() {
 }
 
 function handlePreviewResponse(raw, isMarkdown) {
-    var pages = normalizePreviewPages(raw);
-    if (!pages.length) {
-        if (isMarkdown) {
-            clearMarkdownPreviewState();
-        }
+    // Handle error responses
+    if (raw && raw.error) {
+        console.log('Preview error:', raw.error);
+        $('#sourceDimensions').hide();
+        clearMarkdownPreviewState();
         return;
     }
 
-    if (isMarkdown) {
+    var pages = normalizePreviewPages(raw);
+    if (!pages.length) {
+        if (isMarkdown || pages.length > 1) {
+            clearMarkdownPreviewState();
+        }
+        $('#sourceDimensions').hide();
+        return;
+    }
+
+    // Display source dimensions if available
+    if (raw && raw.source_width_mm && raw.source_height_mm) {
+        $('#sourceWidth').text(raw.source_width_mm);
+        $('#sourceHeight').text(raw.source_height_mm);
+        $('#sourceDimensions').show();
+    } else {
+        $('#sourceDimensions').hide();
+    }
+
+    // Handle PDF page info
+    if (raw && raw.pdf_page_count && raw.pdf_page_count > 1) {
+        var currentPage = raw.pdf_current_page || 1;
+        setPdfPageInfo(currentPage, raw.pdf_page_count);
+    } else if (isPdfLoaded && (!raw || !raw.pdf_page_count)) {
+        // PDF was removed, hide navigation
+        isPdfLoaded = false;
+        $('#pdfPageNavigation').hide();
+    }
+
+    // Use pager for markdown or multipage images (e.g., multipage PDFs)
+    if (isMarkdown || pages.length > 1) {
         var previousPage = markdownCurrentPage;
         markdownPreviewPages = pages;
         showMarkdownPage(Math.min(previousPage, pages.length - 1));
+        // Show page range selector for multipage content
+        if (pages.length > 1) {
+            $('#pageRange').show();
+        }
+        normalizePageRange(pages.length);
     } else {
-        clearMarkdownPreviewState();
+        clearMarkdownPreviewState({ keepPageRange: isPdfLoaded });
         updatePreview(pages[0]);
     }
 }
@@ -398,7 +777,8 @@ function preview(forceRender) {
     toggleMarkdownOptions(isMarkdown);
 
     if (!isMarkdown) {
-        clearMarkdownPreviewState();
+        var keepPageRange = (printType === 'image' && isPdfLoaded);
+        clearMarkdownPreviewState({ keepPageRange: keepPageRange });
     }
 
     if ($('#labelSize option:selected').data('round') === 'True') {
@@ -435,15 +815,61 @@ function preview(forceRender) {
     if (printType === 'image') {
         $('#groupLabelText').hide();
         $('#groupLabelImage').show();
+        // Clear any markdown preview content when switching to image mode
+        clearMarkdownPreviewState({ keepPageRange: isPdfLoaded });
+        $('#previewImg').attr('src', '');
     } else {
         $('#groupLabelText').show();
         $('#groupLabelImage').hide();
+        // Hide page range when switching away from image/markdown mode and no PDF/multipage content
+        if (!isPdfLoaded) {
+            console.log('[preview] Hiding page range - isPdfLoaded:', isPdfLoaded);
+            $('#pageRange').hide();
+        } else {
+            console.log('[preview] Keeping page range visible - isPdfLoaded:', isPdfLoaded);
+        }
     }
 
     if (printType === 'image') {
         dropZoneMode = 'preview';
         if (imageDropZone) {
-            imageDropZone.processQueue();
+            console.log('[preview] Image mode - dropzone files:', imageDropZone.files);
+            console.log('[preview] PDF page:', pdfCurrentPage, 'isPdfLoaded:', isPdfLoaded);
+            console.log('[preview] Stored file:', uploadedImageFile ? uploadedImageFile.name : 'none');
+
+            // If we have a stored file (for PDF page navigation), send it directly
+            if (uploadedImageFile && isPdfLoaded) {
+                console.log('[preview] Sending stored file for page', pdfCurrentPage);
+                var formDataObj = new FormData();
+
+                // Add the image file
+                formDataObj.append('image', uploadedImageFile);
+
+                // Add all other form parameters
+                var fd = formData(false);
+                $.each(fd, function(key, value){
+                    formDataObj.append(key, value);
+                });
+
+                $.ajax({
+                    type: 'POST',
+                    url: '{{url_for('.get_preview_from_image')}}?return_format=base64',
+                    data: formDataObj,
+                    processData: false,
+                    contentType: false,
+                    success: function(data) {
+                        handlePreviewResponse(data, false);
+                    },
+                    error: function(xhr) {
+                        console.error('[preview] Error loading PDF page:', xhr);
+                    }
+                });
+            } else if (imageDropZone.files && imageDropZone.files.length > 0) {
+                // Normal file upload flow
+                imageDropZone.processQueue();
+            } else {
+                console.log('[preview] No files to process');
+            }
         }
         return;
     }
@@ -516,6 +942,8 @@ function print(cut_once) {
 
     if (getCheckedValue('printType') === 'image') {
         dropZoneMode = 'print';
+        console.log('[print] Set dropZoneMode to print, isPdfLoaded:', isPdfLoaded);
+        console.log('[print] PDF page range:', $('#pdfPrintFrom').val(), '-', $('#pdfPrintTo').val());
         if (imageDropZone) {
             imageDropZone.processQueue();
         }
@@ -578,6 +1006,13 @@ function collectSettings() {
         qrcode_correction: $('#qrCodeCorrection').val(),
         image_mode: getCheckedValue('imageMode'),
         image_bw_threshold: $('#imageBwThreshold').val(),
+        image_rotate_90: $('#imageRotate90').is(':checked') ? 1 : 0,
+        image_stretch_length: $('#imageStretchLength').is(':checked') ? 1 : 0,
+        no_crop: $('#imageNoCrop').is(':checked') ? 1 : 0,
+        image_crop_left: $('#imageCropLeft').val(),
+        image_crop_right: $('#imageCropRight').val(),
+        image_crop_top: $('#imageCropTop').val(),
+        image_crop_bottom: $('#imageCropBottom').val(),
         print_count: $('#printCount').val(),
         line_spacing: getCheckedValue('lineSpacing'),
         {% if red_support %}
@@ -587,11 +1022,54 @@ function collectSettings() {
         markdown_auto_render: markdownAutoRenderEnabled() ? 1 : 0,
         markdown_paged: markdownPagedEnabled() ? 1 : 0,
         markdown_slice_mm: $('#markdownSliceMm').val(),
-        markdown_footer_mm: normalizeFooterInput(),
         markdown_page_numbers: markdownPageNumbersEnabled() ? 1 : 0,
         markdown_page_circle: $('#markdownPageCircle').is(':checked') ? 1 : 0,
         markdown_page_number_mm: $('#markdownPageNumberMm').val(),
-        markdown_page_count: $('#markdownPageCount').is(':checked') ? 1 : 0
+        markdown_page_count: $('#markdownPageCount').is(':checked') ? 1 : 0,
+        // Border areas with radio-based content type selection
+        enable_left_area: $('#enableLeftArea').is(':checked') ? 1 : 0,
+        enable_left_bar: (getCheckedValue('leftContentType') === 'bar') ? 1 : 0,
+        enable_left_text: (getCheckedValue('leftContentType') === 'text') ? 1 : 0,
+        left_area_mm: $('#leftAreaMm').val(),
+        left_bar_mm: $('#leftBarMm').val(),
+        left_bar_text_size_pt: $('#leftBarTextSizePt').val(),
+        left_bar_text: $('#leftBarText').val(),
+        left_text: $('#leftText').val(),
+        left_bar_color: getCheckedValue('leftBarColor'),
+
+        enable_right_area: $('#enableRightArea').is(':checked') ? 1 : 0,
+        enable_right_bar: (getCheckedValue('rightContentType') === 'bar') ? 1 : 0,
+        enable_right_text: (getCheckedValue('rightContentType') === 'text') ? 1 : 0,
+        right_area_mm: $('#rightAreaMm').val(),
+        right_bar_mm: $('#rightBarMm').val(),
+        right_bar_text_size_pt: $('#rightBarTextSizePt').val(),
+        right_bar_text: $('#rightBarText').val(),
+        right_text: $('#rightText').val(),
+        right_bar_color: getCheckedValue('rightBarColor'),
+
+        enable_top_area: $('#enableTopArea').is(':checked') ? 1 : 0,
+        enable_top_bar: (getCheckedValue('topContentType') === 'bar') ? 1 : 0,
+        enable_top_text: (getCheckedValue('topContentType') === 'text') ? 1 : 0,
+        top_area_mm: $('#topAreaMm').val(),
+        top_bar_mm: $('#topBarMm').val(),
+        top_bar_text_size_pt: $('#topBarTextSizePt').val(),
+        top_bar_text: $('#topBarText').val(),
+        top_bar_color: getCheckedValue('topBarColor'),
+        top_text: $('#topText').val(),
+        top_divider: $('#topDivider').is(':checked') ? 1 : 0,
+
+        enable_bottom_area: $('#enableBottomArea').is(':checked') ? 1 : 0,
+        enable_bottom_bar: (getCheckedValue('bottomContentType') === 'bar') ? 1 : 0,
+        enable_bottom_text: (getCheckedValue('bottomContentType') === 'text') ? 1 : 0,
+        bottom_area_mm: $('#bottomAreaMm').val(),
+        bottom_bar_mm: $('#bottomBarMm').val(),
+        bottom_bar_text_size_pt: $('#bottomBarTextSizePt').val(),
+        bottom_bar_text: $('#bottomBarText').val(),
+        bottom_bar_color: getCheckedValue('bottomBarColor'),
+        bottom_text: $('#bottomText').val(),
+        bottom_divider: $('#bottomDivider').is(':checked') ? 1 : 0,
+        bottom_show_page_numbers: $('#bottomShowPageNumbers').is(':checked') ? 1 : 0,
+        bottom_page_number_mm: $('#bottomPageNumberMm').val()
     };
 }
 
@@ -639,6 +1117,21 @@ function applySettings(settings) {
     if (typeof settings.image_bw_threshold !== 'undefined' && settings.image_bw_threshold !== null) {
         $('#imageBwThreshold').val(settings.image_bw_threshold);
     }
+    $('#imageRotate90').prop('checked', settings.image_rotate_90 ? true : false);
+    $('#imageStretchLength').prop('checked', settings.image_stretch_length ? true : false);
+    $('#imageNoCrop').prop('checked', settings.no_crop ? true : false);
+    if (typeof settings.image_crop_left !== 'undefined' && settings.image_crop_left !== null) {
+        $('#imageCropLeft').val(settings.image_crop_left);
+    }
+    if (typeof settings.image_crop_right !== 'undefined' && settings.image_crop_right !== null) {
+        $('#imageCropRight').val(settings.image_crop_right);
+    }
+    if (typeof settings.image_crop_top !== 'undefined' && settings.image_crop_top !== null) {
+        $('#imageCropTop').val(settings.image_crop_top);
+    }
+    if (typeof settings.image_crop_bottom !== 'undefined' && settings.image_crop_bottom !== null) {
+        $('#imageCropBottom').val(settings.image_crop_bottom);
+    }
     if (typeof settings.print_count !== 'undefined' && settings.print_count !== null) {
         $('#printCount').val(settings.print_count);
     }
@@ -646,15 +1139,7 @@ function applySettings(settings) {
     if (typeof settings.markdown_slice_mm !== 'undefined' && settings.markdown_slice_mm !== null) {
         $('#markdownSliceMm').val(settings.markdown_slice_mm);
     }
-    if (typeof settings.markdown_footer_mm !== 'undefined' && settings.markdown_footer_mm !== null) {
-        var footerValue = parseFloat(settings.markdown_footer_mm);
-        if (isNaN(footerValue)) {
-            footerValue = 0;
-        }
-        $('#markdownFooterMm').val(Math.max(0, footerValue));
-    } else {
-        $('#markdownFooterMm').val(4);
-    }
+    // Footer is now integrated with bottom_area_mm, no separate footer field
 
     $('#markdownPaged').prop('checked', settings.markdown_paged ? true : false);
     onMarkdownPagedToggle();
@@ -666,6 +1151,131 @@ function applySettings(settings) {
     }
     $('#markdownPageCount').prop('checked', settings.markdown_page_count ? true : false);
     $('#markdownAutoRender').prop('checked', settings.markdown_auto_render ? true : false);
+
+    // Restore border area settings
+    // Left area
+    if (settings.enable_left_area) {
+        $('#enableLeftArea').prop('checked', true);
+        toggleHeaderArea('left');
+        if (typeof settings.left_area_mm !== 'undefined' && settings.left_area_mm !== null) {
+            $('#leftAreaMm').val(settings.left_area_mm);
+        }
+        // Restore content type (bar/text/none)
+        if (settings.enable_left_bar) {
+            $('#leftContentBar').addClass('active').find('input').prop('checked', true);
+            toggleBorderContentType('left', 'bar');
+            if (typeof settings.left_bar_mm !== 'undefined' && settings.left_bar_mm !== null) {
+                $('#leftBarMm').val(settings.left_bar_mm);
+            }
+            if (typeof settings.left_bar_text_size_pt !== 'undefined' && settings.left_bar_text_size_pt !== null) {
+                $('#leftBarTextSizePt').val(settings.left_bar_text_size_pt);
+            }
+            if (typeof settings.left_bar_text !== 'undefined' && settings.left_bar_text !== null) {
+                $('#leftBarText').val(settings.left_bar_text);
+            }
+            setRadioGroup('leftBarColor', settings.left_bar_color);
+        } else if (settings.enable_left_text) {
+            $('#leftContentText').addClass('active').find('input').prop('checked', true);
+            toggleBorderContentType('left', 'text');
+            if (typeof settings.left_text !== 'undefined' && settings.left_text !== null) {
+                $('#leftText').val(settings.left_text);
+            }
+        }
+    }
+    // Right area
+    if (settings.enable_right_area) {
+        $('#enableRightArea').prop('checked', true);
+        toggleHeaderArea('right');
+        if (typeof settings.right_area_mm !== 'undefined' && settings.right_area_mm !== null) {
+            $('#rightAreaMm').val(settings.right_area_mm);
+        }
+        // Restore content type (bar/text/none)
+        if (settings.enable_right_bar) {
+            $('#rightContentBar').addClass('active').find('input').prop('checked', true);
+            toggleBorderContentType('right', 'bar');
+            if (typeof settings.right_bar_mm !== 'undefined' && settings.right_bar_mm !== null) {
+                $('#rightBarMm').val(settings.right_bar_mm);
+            }
+            if (typeof settings.right_bar_text_size_pt !== 'undefined' && settings.right_bar_text_size_pt !== null) {
+                $('#rightBarTextSizePt').val(settings.right_bar_text_size_pt);
+            }
+            if (typeof settings.right_bar_text !== 'undefined' && settings.right_bar_text !== null) {
+                $('#rightBarText').val(settings.right_bar_text);
+            }
+            setRadioGroup('rightBarColor', settings.right_bar_color);
+        } else if (settings.enable_right_text) {
+            $('#rightContentText').addClass('active').find('input').prop('checked', true);
+            toggleBorderContentType('right', 'text');
+            if (typeof settings.right_text !== 'undefined' && settings.right_text !== null) {
+                $('#rightText').val(settings.right_text);
+            }
+        }
+    }
+    // Top area
+    if (settings.enable_top_area) {
+        $('#enableTopArea').prop('checked', true);
+        toggleHeaderArea('top');
+        if (typeof settings.top_area_mm !== 'undefined' && settings.top_area_mm !== null) {
+            $('#topAreaMm').val(settings.top_area_mm);
+        }
+        // Restore content type (bar/text/none)
+        if (settings.enable_top_bar) {
+            $('#topContentBar').addClass('active').find('input').prop('checked', true);
+            toggleBorderContentType('top', 'bar');
+            if (typeof settings.top_bar_mm !== 'undefined' && settings.top_bar_mm !== null) {
+                $('#topBarMm').val(settings.top_bar_mm);
+            }
+            if (typeof settings.top_bar_text_size_pt !== 'undefined' && settings.top_bar_text_size_pt !== null) {
+                $('#topBarTextSizePt').val(settings.top_bar_text_size_pt);
+            }
+            if (typeof settings.top_bar_text !== 'undefined' && settings.top_bar_text !== null) {
+                $('#topBarText').val(settings.top_bar_text);
+            }
+            setRadioGroup('topBarColor', settings.top_bar_color);
+        } else if (settings.enable_top_text) {
+            $('#topContentText').addClass('active').find('input').prop('checked', true);
+            toggleBorderContentType('top', 'text');
+            if (typeof settings.top_text !== 'undefined' && settings.top_text !== null) {
+                $('#topText').val(settings.top_text);
+            }
+            $('#topDivider').prop('checked', settings.top_divider ? true : false);
+        }
+    }
+    // Bottom area
+    if (settings.enable_bottom_area) {
+        $('#enableBottomArea').prop('checked', true);
+        toggleHeaderArea('bottom');
+        if (typeof settings.bottom_area_mm !== 'undefined' && settings.bottom_area_mm !== null) {
+            $('#bottomAreaMm').val(settings.bottom_area_mm);
+        }
+        // Restore content type (bar/text/none)
+        if (settings.enable_bottom_bar) {
+            $('#bottomContentBar').addClass('active').find('input').prop('checked', true);
+            toggleBorderContentType('bottom', 'bar');
+            if (typeof settings.bottom_bar_mm !== 'undefined' && settings.bottom_bar_mm !== null) {
+                $('#bottomBarMm').val(settings.bottom_bar_mm);
+            }
+            if (typeof settings.bottom_bar_text_size_pt !== 'undefined' && settings.bottom_bar_text_size_pt !== null) {
+                $('#bottomBarTextSizePt').val(settings.bottom_bar_text_size_pt);
+            }
+            if (typeof settings.bottom_bar_text !== 'undefined' && settings.bottom_bar_text !== null) {
+                $('#bottomBarText').val(settings.bottom_bar_text);
+            }
+            setRadioGroup('bottomBarColor', settings.bottom_bar_color);
+        } else if (settings.enable_bottom_text) {
+            $('#bottomContentText').addClass('active').find('input').prop('checked', true);
+            toggleBorderContentType('bottom', 'text');
+            if (typeof settings.bottom_text !== 'undefined' && settings.bottom_text !== null) {
+                $('#bottomText').val(settings.bottom_text);
+            }
+            $('#bottomDivider').prop('checked', settings.bottom_divider ? true : false);
+            $('#bottomShowPageNumbers').prop('checked', settings.bottom_show_page_numbers ? true : false);
+            if (typeof settings.bottom_page_number_mm !== 'undefined' && settings.bottom_page_number_mm !== null) {
+                $('#bottomPageNumberMm').val(settings.bottom_page_number_mm);
+            }
+            onBottomPageNumbersToggle();
+        }
+    }
 
     setRadioGroup('fontAlign', settings.align);
     setRadioGroup('orientation', settings.orientation);
@@ -778,6 +1388,22 @@ function registerStorageHandlers() {
     $('#markdownPageNumbers').on('change', schedulePersist);
     $('#markdownPageCircle').on('change', schedulePersist);
     $('#markdownPageCount').on('change', schedulePersist);
+
+    var borderAreaSelectors = [
+        '#enableLeftArea', '#enableLeftBar', '#enableLeftText',
+        '#enableRightArea', '#enableRightBar', '#enableRightText',
+        '#enableTopArea', '#enableTopBar', '#enableTopText',
+        '#enableBottomArea', '#enableBottomBar', '#enableBottomText',
+        '#leftAreaMm', '#leftBarMm', '#leftBarTextSizePt',
+        '#rightAreaMm', '#rightBarMm', '#rightBarTextSizePt',
+        '#topAreaMm', '#topBarMm', '#topBarTextSizePt', '#topDivider',
+        '#bottomAreaMm', '#bottomBarMm', '#bottomBarTextSizePt', '#bottomDivider',
+        '#bottomShowPageNumbers', '#bottomPageNumberMm'
+    ];
+    $(borderAreaSelectors.join(',')).on('change', schedulePersist);
+
+    $('#leftText, #leftBarText, #rightText, #rightBarText, #topText, #topBarText, #bottomText, #bottomBarText').on('input', schedulePersist);
+    $('input[name=leftBarColor], input[name=rightBarColor], input[name=topBarColor], input[name=bottomBarColor]').on('change', schedulePersist);
 }
 
 function loadPrinters() {
@@ -799,9 +1425,90 @@ function loadPrinters() {
             }
             select.append(option);
         });
+
+        // After loading printers, query status for auto-detection
+        queryPrinterStatusAndApply();
     }).fail(function() {
         $('#printerSelect').html('<option value="">Error loading printers</option>');
     });
+}
+
+function queryPrinterStatusAndApply() {
+    /**
+     * Query printer status and auto-set label size/color with fallback chain:
+     * 1. Try auto-detect from printer (if supported)
+     * 2. Use last selected from localStorage
+     * 3. Use server-configured defaults
+     */
+    var printerId = $('#printerSelect').val();
+    if (!printerId) {
+        // No printer selected, use fallback
+        applyLabelSettingsFromLocalStorage();
+        return;
+    }
+
+    // Check if we've already determined this printer doesn't support status
+    var printerStatusCache = localStorage.getItem('printer_status_support_' + printerId);
+    if (printerStatusCache === 'false') {
+        // Skip query, use fallback
+        applyLabelSettingsFromLocalStorage();
+        return;
+    }
+
+    // Query printer status
+    $.get('/labeldesigner/api/printer/status?printer_id=' + printerId)
+        .done(function(response) {
+            if (response.success && response.status) {
+                var status = response.status;
+
+                // Cache that this printer supports status
+                localStorage.setItem('printer_status_support_' + printerId, 'true');
+
+                // Auto-set label size if detected
+                if (status.media_type) {
+                    var labelSelect = $('#labelSize');
+                    var option = labelSelect.find('option[value="' + status.media_type + '"]');
+                    if (option.length > 0) {
+                        labelSelect.val(status.media_type);
+                        console.log('Auto-detected label size: ' + status.media_type);
+
+                        // Save to localStorage for next time
+                        localStorage.setItem('last_label_size', status.media_type);
+                    }
+                }
+
+                // Trigger preview update
+                preview();
+            } else {
+                // Status query not supported or failed
+                if (response.supported === false) {
+                    // Cache that this printer doesn't support status
+                    localStorage.setItem('printer_status_support_' + printerId, 'false');
+                }
+                // Fall back to localStorage
+                applyLabelSettingsFromLocalStorage();
+            }
+        })
+        .fail(function() {
+            // Query failed, fall back to localStorage
+            applyLabelSettingsFromLocalStorage();
+        });
+}
+
+function applyLabelSettingsFromLocalStorage() {
+    /**
+     * Apply last-used label size from localStorage as fallback
+     */
+    var lastLabelSize = localStorage.getItem('last_label_size');
+    if (lastLabelSize) {
+        var labelSelect = $('#labelSize');
+        var option = labelSelect.find('option[value="' + lastLabelSize + '"]');
+        if (option.length > 0) {
+            labelSelect.val(lastLabelSize);
+            console.log('Applied last-used label size from localStorage: ' + lastLabelSize);
+        }
+    }
+    // If no localStorage value, server defaults are already set
 }
 
 $(function() {
@@ -812,11 +1519,61 @@ $(function() {
     }
 
     toggleMarkdownOptions(getCheckedValue('printType') === 'markdown');
+    updateOrientationRestrictions();
+
+    // Initialize markdown button states
+    if ($('#markdownAutoRender').is(':checked')) {
+        $('#markdownAutoRenderBtn').addClass('active');
+    }
+    if ($('#markdownPaged').is(':checked')) {
+        $('#markdownPagedBtn').addClass('active');
+        $('#markdownPagedInputs').show();
+    }
 
     registerStorageHandlers();
     updateStyles();
     loadPrinters();
-    preview();
+
+    // Clear preview if in image mode but no file loaded
+    var printType = getCheckedValue('printType');
+    if (printType === 'image' && !uploadedImageFile) {
+        $('#previewImg').attr('src', '');
+        // Also clear any markdown state that might be lingering
+        clearMarkdownPreviewState();
+    } else if (printType !== 'image') {
+        // Only generate preview for text-based modes
+        preview();
+    }
+
+    // Save label size to localStorage when changed manually
+    $('#labelSize').on('change', function() {
+        var labelSize = $(this).val();
+        if (labelSize) {
+            localStorage.setItem('last_label_size', labelSize);
+        }
+    });
+
+    // Re-query status when printer is changed
+    $('#printerSelect').on('change', function() {
+        queryPrinterStatusAndApply();
+    });
+
+    $('#pageRangeClear').on('click', function() {
+        clearPageRangeInputs();
+        if (isPdfLoaded) {
+            normalizePageRange(pdfTotalPages);
+        } else if (markdownPreviewPages.length > 0) {
+            normalizePageRange(markdownPreviewPages.length);
+        }
+    });
+
+    $('#pageFrom, #pageTo').on('change', function() {
+        var total = isPdfLoaded ? pdfTotalPages : (markdownPreviewPages.length || 0);
+        if (total > 0) {
+            normalizePageRange(total);
+        }
+        schedulePersist();
+    });
 
     setTimeout(function() {
         initializing = false;
@@ -858,24 +1615,96 @@ Dropzone.options.myAwesomeDropzone = {
 
     success: function(file, response) {
         // If preview or print was successfull update the previewpane or print status
+        console.log('[dropzone] Success callback - mode:', dropZoneMode, 'file status before:', file.status);
         if (dropZoneMode == 'preview') {
             handlePreviewResponse(response, getCheckedValue('printType') === 'markdown');
         } else {
             setStatus(response);
         }
         file.status = Dropzone.QUEUED;
+        console.log('[dropzone] File status set to QUEUED, files in dropzone:', imageDropZone.files.length);
     },
 
     accept: function(file, done) {
-        // If a valid file was added, perform the preview
+        // If a valid file was added, store reference and perform the preview
+        uploadedImageFile = file;
+        console.log('[dropzone] File accepted and stored:', file.name);
         done();
         preview();
     },
 
     removedfile: function(file) {
         file.previewElement.remove();
-        preview();
-        // Insert a dummy image
-        updatePreview('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=');
+        uploadedImageFile = null;  // Clear stored file reference
+        // Clear preview image completely
+        $('#previewImg').attr('src', '');
+        // Reset PDF navigation
+        isPdfLoaded = false;
+        pdfCurrentPage = 1;
+        pdfTotalPages = 1;
+        $('#pdfPageNavigation').hide();
+        $('#pageRange').hide();
     }
 };
+
+// PDF page navigation functions
+function changePdfPage(direction) {
+    var newPage = pdfCurrentPage + direction;
+    if (newPage >= 1 && newPage <= pdfTotalPages) {
+        pdfCurrentPage = newPage;
+        $('#pdfPageInput').val(pdfCurrentPage);
+        updatePageButtons();
+        preview();  // Reload preview with new page
+    }
+}
+
+function updatePageButtons() {
+    $('#pdfPrevPage').prop('disabled', pdfCurrentPage <= 1);
+    $('#pdfNextPage').prop('disabled', pdfCurrentPage >= pdfTotalPages);
+}
+
+function setPdfPageInfo(currentPage, totalPages) {
+    console.log('[setPdfPageInfo] Setting PDF info - current:', currentPage, 'total:', totalPages);
+    isPdfLoaded = true;
+    pdfCurrentPage = currentPage;
+    pdfTotalPages = totalPages;
+    $('#pdfTotalPages').text(totalPages);
+    $('#pdfPageInput').attr('max', totalPages).val(currentPage);
+
+    // Only set default page range values if they're not already set by the user
+    var fromInput = $('#pageFrom');
+    var toInput = $('#pageTo');
+    if (!fromInput.val() || fromInput.val() == '') {
+        fromInput.attr('max', totalPages).val(1);
+    } else {
+        fromInput.attr('max', totalPages);
+    }
+    if (!toInput.val() || toInput.val() == '') {
+        toInput.attr('max', totalPages).val(totalPages);
+    } else {
+        toInput.attr('max', totalPages);
+    }
+
+    $('#pdfPageNavigation').show();
+    $('#pageRange').show();
+    // Force display to ensure it's visible
+    $('#pageRange').css('display', 'block');
+    console.log('[setPdfPageInfo] Showing page range, exists:', $('#pageRange').length, 'visibility:', $('#pageRange').is(':visible'), 'display style:', $('#pageRange').css('display'));
+    console.log('[setPdfPageInfo] Page range parent visible:', $('#pageRange').parent().is(':visible'));
+    console.log('[setPdfPageInfo] Page range offset top:', $('#pageRange').offset() ? $('#pageRange').offset().top : 'null');
+    console.log('[setPdfPageInfo] Page range values - from:', $('#pageFrom').val(), 'to:', $('#pageTo').val());
+    normalizePageRange(totalPages);
+    updatePageButtons();
+}
+
+function goToPdfPage() {
+    var pageNum = parseInt($('#pdfPageInput').val());
+    if (pageNum >= 1 && pageNum <= pdfTotalPages) {
+        pdfCurrentPage = pageNum;
+        updatePageButtons();
+        preview();
+    } else {
+        // Reset to current page if invalid
+        $('#pdfPageInput').val(pdfCurrentPage);
+    }
+}
