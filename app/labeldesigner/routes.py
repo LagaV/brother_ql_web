@@ -1625,6 +1625,14 @@ def create_label_from_context(context, image_file=None):
     orientation_value = str(context.get('label_orientation', 'standard')).lower()
     label_orientation = LabelOrientation.ROTATED if orientation_value == 'rotated' else LabelOrientation.STANDARD
 
+   
+
+   
+
+   
+
+   
+
     kind = context.get('kind', ENDLESS_LABEL)
     is_endless = kind == ENDLESS_LABEL
     if is_endless:
@@ -1711,23 +1719,30 @@ def create_label_from_context(context, image_file=None):
 
         if label_orientation == LabelOrientation.ROTATED:
             # For rotated mode:
-            # - Render at the SLICE HEIGHT as width (e.g., 80mm = 945px) so text flows horizontally
-            # - Slice at the LABEL WIDTH as height (e.g., 54mm = 640px)
-            # - Reduce for left/right border areas (affects render width)
-            # - Reduce for top/bottom border areas (affects slice height)
+            # - Rendering canvas width = slice width minus L/R borders
+            # - Rendering canvas height = label width minus T/B borders
+            # - After slicing, add_border_areas() will expand each slice to full label width
             slice_width_px = mm_to_pixels(slice_mm_config, DEFAULT_DPI)
             markdown_render_width_px = max(slice_width_px - left_area_px - right_area_px, 10)
-            # Override slice_mm to be the label width for slicing, minus top/bottom border areas
-            label_width_mm = standard_width_px * 25.4 / DEFAULT_DPI  # Convert label width back to mm
+            
+            label_width_mm = standard_width_px * 25.4 / DEFAULT_DPI
+            # Slice at CONTENT height (borders will be ADDED to reach full label width)
             actual_slice_height_mm = max(label_width_mm - float(context.get('top_area_mm', 0)) - float(context.get('bottom_area_mm', 0)), 1)
-            current_app.logger.info('[markdown-rotate] render_width=%dpx (slice %.1fmm - borders), slice_height=%.1fmm (label width %.1fmm - borders)',
+            
+            current_app.logger.info('[markdown-rotate] render_width=%dpx (%.1fmm - borders), slice_height=%.1fmm (%.1fmm label - borders)',
                                    markdown_render_width_px, slice_mm_config, actual_slice_height_mm, label_width_mm)
         else:
-            # For standard orientation, render at content width (margins already subtracted)
-            # Reduce for left/right border areas (affects render width)
-            # Reduce for top/bottom border areas (affects slice height)
+            # For standard orientation:
+            # - Rendering canvas width = content width minus L/R borders
+            # - Rendering canvas height = configured height minus T/B borders
+            # - After slicing, add_border_areas() will expand each slice to full configured height
             markdown_render_width_px = max(content_width_px - left_area_px - right_area_px, 10)
+            # Slice at CONTENT height (borders will be ADDED to reach configured height)
             actual_slice_height_mm = max(slice_mm_config - float(context.get('top_area_mm', 0)) - float(context.get('bottom_area_mm', 0)), 1)
+            
+            current_app.logger.info('[markdown-standard] render_width=%dpx (content - borders), slice_height=%.1fmm (%.1fmm config - borders)',
+                                   markdown_render_width_px, actual_slice_height_mm, slice_mm_config)
+        
         render_width_px = markdown_render_width_px
 
         page_number_mm = float(context.get('markdown_page_number_mm', MARKDOWN_DEFAULT_PAGE_NUMBER_MM))
