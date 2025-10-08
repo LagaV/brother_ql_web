@@ -231,23 +231,16 @@ def register_font_face(path: Optional[str], label: str) -> str:
 
 
 def resolve_font_faces(style_map: Dict[str, str], preferred_style: str) -> Tuple[str, str, str, str]:
-    # Debug: print(f"[FONT_RESOLVE-DEBUG] resolve_font_faces called. style_map keys: {list(style_map.keys())}, preferred_style: {preferred_style}")
-
     def find_with_keywords(keywords: Iterable[str], fallback: str) -> str:
-        # Prioritize 'regular' styles and exclude symbol/emoji fonts
         for key, path in style_map.items():
             name = key.lower()
             if "symbols" in name or "emoji" in name:
-                # Debug: print(f"[FONT_RESOLVE-DEBUG] Skipping symbol/emoji font: {key} ({path})")
                 continue
             if all(word in name for word in keywords):
-                # Debug: print(f"[FONT_RESOLVE-DEBUG] Matched keywords {keywords} with {key} ({path})")
                 return path
-        # Debug: print(f"[FONT_RESOLVE-DEBUG] No exact match for keywords {keywords}. Falling back to preferred_style: {fallback}")
         return style_map.get(fallback, '')
 
     regular_path = style_map.get(preferred_style, '') or style_map.get('Regular', '') or next((path for key, path in style_map.items() if "regular" in key.lower() and "symbols" not in key.lower() and "emoji" not in key.lower()), '') or next(iter(style_map.values()), '')
-    # Debug: print(f"[FONT_RESOLVE-DEBUG] Selected regular_path (before specific bold/italic check): {regular_path}")
     bold_path = find_with_keywords(['bold'], preferred_style) or regular_path
     italic_path = find_with_keywords(['italic'], preferred_style) or find_with_keywords(['oblique'], preferred_style) or regular_path
     bolditalic_path = find_with_keywords(['bold', 'italic'], preferred_style) or find_with_keywords(['bold', 'oblique'], preferred_style) or bold_path or italic_path or regular_path
@@ -259,7 +252,6 @@ def resolve_font_faces(style_map: Dict[str, str], preferred_style: str) -> Tuple
     bold_name = register_font_face(bold_path or regular_path, 'MDBold')
     italic_name = register_font_face(italic_path or regular_path, 'MDItalic')
     bolditalic_name = register_font_face(bolditalic_path or bold_path or italic_path or regular_path, 'MDBoldItalic')
-    # Debug: print(f"[FONT_RESOLVE-DEBUG] Final resolved font paths: Regular='{regular_name}', Bold='{bold_name}', Italic='{italic_name}', BoldItalic='{bolditalic_name}'")
     return (regular_name, bold_name, italic_name, bolditalic_name)
 
 
@@ -530,13 +522,6 @@ def add_border_areas(img: Image.Image,
     from datetime import datetime
     from PIL import ImageDraw, ImageFont
 
-    print(f"[BORDER-DEBUG] ========== add_border_areas called ==========")
-    print(f"[BORDER-DEBUG] Input image size: {img.width}x{img.height}")
-    print(f"[BORDER-DEBUG] Areas (mm): left={left_area_mm}, right={right_area_mm}, top={top_area_mm}, bottom={bottom_area_mm}")
-    print(f"[BORDER-DEBUG] Enable area flags: left={enable_left_area}, right={enable_right_area}, top={enable_top_area}, bottom={enable_bottom_area}")
-    print(f"[BORDER-DEBUG] Enable bar flags: left={enable_left_bar}, right={enable_right_bar}, top={enable_top_bar}, bottom={enable_bottom_bar}")
-    print(f"[BORDER-DEBUG] Enable text flags: left={enable_left_text}, right={enable_right_text}, top={enable_top_text}, bottom={enable_bottom_text}")
-
     # Convert mm to pixels
     left_area_px = int(left_area_mm * dpi / 25.4) if left_area_mm > 0 else 0
     right_area_px = int(right_area_mm * dpi / 25.4) if right_area_mm > 0 else 0
@@ -547,9 +532,6 @@ def add_border_areas(img: Image.Image,
     right_bar_px = int(right_bar_mm * dpi / 25.4) if right_bar_mm > 0 else 0
     top_bar_px = int(top_bar_mm * dpi / 25.4) if top_bar_mm > 0 else 0
     bottom_bar_px = int(bottom_bar_mm * dpi / 25.4) if bottom_bar_mm > 0 else 0
-
-    print(f"[BORDER-DEBUG] Areas (px): left={left_area_px}, right={right_area_px}, top={top_area_px}, bottom={bottom_area_px}")
-    print(f"[BORDER-DEBUG] Bars (px): left={left_bar_px}, right={right_bar_px}, top={top_bar_px}, bottom={bottom_bar_px}")
 
     if top_area_px == 0:
         top_bar_px = 0
@@ -563,7 +545,6 @@ def add_border_areas(img: Image.Image,
 
     # If no areas, return original
     if left_area_px == 0 and right_area_px == 0 and top_area_px == 0 and bottom_area_px == 0:
-        print(f"[BORDER-DEBUG] No border areas configured, returning original image")
         return img
 
     # The input image is already rendered at the correct content size
@@ -575,9 +556,6 @@ def add_border_areas(img: Image.Image,
     final_width = content_width + left_area_px + right_area_px
     final_height = content_height + top_area_px + bottom_area_px
 
-    print(f"[BORDER-DEBUG] Content size: {content_width}x{content_height}")
-    print(f"[BORDER-DEBUG] Final canvas size: {final_width}x{final_height}")
-
     # Create result canvas with border areas
     result = Image.new('RGB', (final_width, final_height), 'white')
 
@@ -585,10 +563,8 @@ def add_border_areas(img: Image.Image,
     content_x = left_area_px
     content_y = top_area_px
     result.paste(img, (content_x, content_y))
-    print(f"[BORDER-DEBUG] Content pasted at ({content_x}, {content_y})")
 
     draw = ImageDraw.Draw(result)
-    print(f"[BORDER-DEBUG] ImageDraw object created: {draw}")
 
     # Process text variables
     def process_vars(text: str) -> str:
@@ -617,12 +593,9 @@ def add_border_areas(img: Image.Image,
                     try:
                         if font_path:
                             font = ImageFont.truetype(font_path, font_size_px)
-                            print(f"[BORDER-DEBUG] LEFT BAR TEXT: Loaded font from path: {font_path}")
                         else:
-                            print("[BORDER-DEBUG] LEFT BAR TEXT: font_path is None. Using default font.")
                             font = ImageFont.load_default()
                     except Exception as font_e:
-                        print(f"[BORDER-DEBUG] LEFT BAR TEXT: ERROR loading font {font_path}: {font_e}. Using default font.")
                         font = ImageFont.load_default()
 
                     # Create text image to rotate - dimensions for vertical bar
@@ -643,9 +616,7 @@ def add_border_areas(img: Image.Image,
                     txt_img = txt_img.rotate(90, expand=True)
                     result.paste(txt_img, (0, 0))
                 except Exception as e:
-                    print(f"[BORDER-DEBUG] ERROR drawing LEFT BAR TEXT: {e}")
-                    import traceback
-                    traceback.print_exc()
+                    pass
 
         # Left text (only if text is enabled, not bar)
         elif enable_left_text and left_text and font_path:
@@ -654,12 +625,9 @@ def add_border_areas(img: Image.Image,
                 try:
                     if font_path:
                         font = ImageFont.truetype(font_path, font_size_px)
-                        print(f"[BORDER-DEBUG] LEFT TEXT: Loaded font from path: {font_path}")
                     else:
-                        print("[BORDER-DEBUG] LEFT TEXT: font_path is None. Using default font.")
                         font = ImageFont.load_default()
                 except Exception as font_e:
-                    print(f"[BORDER-DEBUG] LEFT TEXT: ERROR loading font {font_path}: {font_e}. Using default font.")
                     font = ImageFont.load_default()
 
                 # Create text image for vertical text
@@ -676,9 +644,7 @@ def add_border_areas(img: Image.Image,
                 txt_img = txt_img.rotate(90, expand=True)
                 result.paste(txt_img, (0, 0))
             except Exception as e:
-                print(f"[BORDER-DEBUG] ERROR drawing LEFT TEXT: {e}")
-                import traceback
-                traceback.print_exc()
+                pass
 
     # RIGHT AREA
     if right_area_px > 0 and enable_right_area:
@@ -694,12 +660,9 @@ def add_border_areas(img: Image.Image,
                     try:
                         if font_path:
                             font = ImageFont.truetype(font_path, font_size_px)
-                            print(f"[BORDER-DEBUG] RIGHT BAR TEXT: Loaded font from path: {font_path}")
                         else:
-                            print("[BORDER-DEBUG] RIGHT BAR TEXT: font_path is None. Using default font.")
                             font = ImageFont.load_default()
                     except Exception as font_e:
-                        print(f"[BORDER-DEBUG] RIGHT BAR TEXT: ERROR loading font {font_path}: {font_e}. Using default font.")
                         font = ImageFont.load_default()
 
                     txt_img = Image.new('RGB', (final_height, right_bar_px), right_bar_fill)
@@ -726,12 +689,9 @@ def add_border_areas(img: Image.Image,
                 try:
                     if font_path:
                         font = ImageFont.truetype(font_path, font_size_px)
-                        print(f"[BORDER-DEBUG] RIGHT TEXT: Loaded font from path: {font_path}")
                     else:
-                        print("[BORDER-DEBUG] RIGHT TEXT: font_path is None. Using default font.")
                         font = ImageFont.load_default()
                 except Exception as font_e:
-                    print(f"[BORDER-DEBUG] RIGHT TEXT: ERROR loading font {font_path}: {font_e}. Using default font.")
                     font = ImageFont.load_default()
 
                 bar_x = final_width - right_area_px
@@ -753,65 +713,48 @@ def add_border_areas(img: Image.Image,
     # TOP AREA
     if top_area_px > 0 and enable_top_area:
         bar_height = top_bar_px
-        print(f"[BORDER-DEBUG] TOP AREA: area_px={top_area_px}, enable_top_area={enable_top_area}, bar_height={bar_height}, enable_top_bar={enable_top_bar}")
-        print(f"[BORDER-DEBUG] TOP AREA: content_x={content_x}, content_width={content_width}, final_height={final_height}")
 
         # Top bar - only if bar is enabled
         if bar_height > 0 and enable_top_bar:
             top_bar_fill = (255, 0, 0) if top_bar_color == 'red' else (0, 0, 0)
             bar_x1 = content_x
             bar_x2 = content_x + content_width
-            print(f"[BORDER-DEBUG] Drawing TOP BAR: x1={bar_x1}, y1=0, x2={bar_x2}, y2={bar_height}, fill={top_bar_fill}")
             draw.rectangle([(bar_x1, 0), (bar_x2, bar_height)], fill=top_bar_fill)
-            print(f"[BORDER-DEBUG] TOP BAR drawn successfully")
 
             if top_bar_text and font_path:
                 try:
-                    print(f"[BORDER-DEBUG] Attempting to draw TOP BAR TEXT: '{top_bar_text}'")
                     font_size_px = int(top_bar_text_size_pt * dpi / 72) if top_bar_text_size_pt > 0 else int(bar_height * 0.6)
-                    print(f"[BORDER-DEBUG] Font size: {font_size_px}px, resolved_font_path: {font_path}")
                     try:
                         font = ImageFont.truetype(font_path, max(font_size_px, 1))
                     except Exception as font_e:
-                        print(f"[BORDER-DEBUG] ERROR loading font {font_path} for top bar text: {font_e}. Using default font.")
                         font = ImageFont.load_default()
                     text = process_vars(top_bar_text)
                     bbox = draw.textbbox((0, 0), text, font=font)
                     w, h = bbox[2] - bbox[0], bbox[3] - bbox[1]
                     x = bar_x1 + (content_width - w) // 2 - bbox[0]
                     y = (bar_height - h) // 2 - bbox[1]
-                    print(f"[BORDER-DEBUG] Drawing text at x={x}, y={y}, text='{text}'")
                     draw.text((x, y), text, fill=(255, 255, 255), font=font)
-                    print(f"[BORDER-DEBUG] TOP BAR TEXT drawn successfully")
                 except Exception as e:
-                    print(f"[BORDER-DEBUG] ERROR drawing TOP BAR TEXT: {e}")
-                    import traceback
-                    traceback.print_exc()
+                    pass
 
         # Top text - only if text is enabled (not bar)
         elif enable_top_text:
-            print(f"[BORDER-DEBUG] TOP TEXT mode: enable_top_text={enable_top_text}, top_text='{top_text}'")
             # Divider line (optional)
             if top_divider:
                 div_y = top_area_px - divider_distance_px
-                print(f"[BORDER-DEBUG] Drawing TOP DIVIDER at y={div_y}")
                 draw.line([(content_x, div_y), (content_x + content_width, div_y)], fill=(0, 0, 0), width=1)
 
             if top_text and font_path:
                 try:
-                    print(f"[BORDER-DEBUG] Attempting to draw TOP TEXT: '{top_text}'")
                     text = process_vars(top_text)
                     # Use custom font size if specified, otherwise use default
                     font_size_px = int(top_text_size_pt * dpi / 72) if top_text_size_pt > 0 else int(default_font_size_pt * dpi / 72)
                     try:
                         if font_path:
                             font = ImageFont.truetype(font_path, font_size_px)
-                            print(f"[BORDER-DEBUG] TOP TEXT: Loaded font from path: {font_path}")
                         else:
-                            print("[BORDER-DEBUG] TOP TEXT: font_path is None. Using default font.")
                             font = ImageFont.load_default()
                     except Exception as font_e:
-                        print(f"[BORDER-DEBUG] TOP TEXT: ERROR loading font {font_path}: {font_e}. Using default font.")
                         font = ImageFont.load_default()
 
                     bbox = draw.textbbox((0, 0), text, font=font)
@@ -820,29 +763,21 @@ def add_border_areas(img: Image.Image,
                     # Center horizontally on content area, vertically within top area
                     x = content_x + (content_width - w) // 2 - bbox[0]
                     y = (top_area_px - h) // 2 - bbox[1]
-                    print(f"[BORDER-DEBUG] Drawing TOP TEXT at x={x}, y={y}, text='{text}'")
                     draw.text((x, y), text, fill=(0, 0, 0), font=font)
-                    print(f"[BORDER-DEBUG] TOP TEXT drawn successfully")
                 except Exception as e:
-                    print(f"[BORDER-DEBUG] ERROR drawing TOP TEXT: {e}")
-                    import traceback
-                    traceback.print_exc()
+                    pass
 
     # BOTTOM AREA
     if bottom_area_px > 0 and enable_bottom_area:
         bar_height = bottom_bar_px
         bar_y1 = final_height - bottom_area_px
         bar_y2 = bar_y1 + bar_height
-        print(f"[BORDER-DEBUG] BOTTOM AREA: area_px={bottom_area_px}, enable_bottom_area={enable_bottom_area}, bar_height={bar_height}, enable_bottom_bar={enable_bottom_bar}")
-        print(f"[BORDER-DEBUG] BOTTOM AREA: bar_y1={bar_y1}, bar_y2={bar_y2}, final_height={final_height}")
 
         if bar_height > 0 and enable_bottom_bar:
             bottom_bar_fill = (255, 0, 0) if bottom_bar_color == 'red' else (0, 0, 0)
             bar_x1 = content_x
             bar_x2 = content_x + content_width
-            print(f"[BORDER-DEBUG] Drawing BOTTOM BAR: x1={bar_x1}, y1={bar_y1}, x2={bar_x2}, y2={bar_y2}, fill={bottom_bar_fill}")
             draw.rectangle([(bar_x1, bar_y1), (bar_x2, bar_y2)], fill=bottom_bar_fill)
-            print(f"[BORDER-DEBUG] BOTTOM BAR drawn successfully")
 
             if bottom_bar_text and font_path:
                 try:
@@ -850,12 +785,9 @@ def add_border_areas(img: Image.Image,
                     try:
                         if font_path:
                             font = ImageFont.truetype(font_path, max(font_size_px, 1))
-                            print(f"[BORDER-DEBUG] BOTTOM BAR TEXT: Loaded font from path: {font_path}")
                         else:
-                            print("[BORDER-DEBUG] BOTTOM BAR TEXT: font_path is None. Using default font.")
                             font = ImageFont.load_default()
                     except Exception as font_e:
-                        print(f"[BORDER-DEBUG] BOTTOM BAR TEXT: ERROR loading font {font_path}: {font_e}. Using default font.")
                         font = ImageFont.load_default()
                     text = process_vars(bottom_bar_text)
                     bbox = draw.textbbox((0, 0), text, font=font)
@@ -883,12 +815,9 @@ def add_border_areas(img: Image.Image,
                         font_size = max(8, min(diameter_px - 2, int(diameter_px * 0.85)))
                         try:
                             font = ImageFont.truetype(font_path, font_size)
-                            print(f"[BORDER-DEBUG] PAGE NUMBER: Loaded font from path: {font_path}")
                         except Exception as font_e:
-                            print(f"[BORDER-DEBUG] PAGE NUMBER: ERROR loading font {font_path}: {font_e}. Using default font.")
                             font = ImageFont.load_default()
                     else:
-                        print("[BORDER-DEBUG] PAGE NUMBER: font_path is None. Using default font.")
                         font = ImageFont.load_default()
 
                     bbox = draw.textbbox((0, 0), number_text, font=font)
@@ -926,12 +855,9 @@ def add_border_areas(img: Image.Image,
                     try:
                         if font_path:
                             font = ImageFont.truetype(font_path, font_size_px)
-                            print(f"[BORDER-DEBUG] BOTTOM TEXT: Loaded font from path: {font_path}")
                         else:
-                            print("[BORDER-DEBUG] BOTTOM TEXT: font_path is None. Using default font.")
                             font = ImageFont.load_default()
                     except Exception as font_e:
-                        print(f"[BORDER-DEBUG] BOTTOM TEXT: ERROR loading font {font_path}: {font_e}. Using default font.")
                         font = ImageFont.load_default()
 
                     bbox = draw.textbbox((0, 0), text, font=font)
@@ -939,6 +865,80 @@ def add_border_areas(img: Image.Image,
 
                     # Centered horizontally on content area, vertically centered in bottom area
                     x = content_x + (content_width - w) // 2 - bbox[0]
+                    text_area_top = final_height - bottom_area_px
+                    text_area_height = bottom_area_px
+                    y = text_area_top + (text_area_height - h) // 2 - bbox[1]
+                    draw.text((x, y), text, fill=(0, 0, 0), font=font)
+                except:
+                    pass
+
+    return result
+
+
+def render_markdown_to_image(markdown_text: str,
+                             *,
+                             content_width_px: int,
+                             dpi: int,
+                             base_font_pt: int,
+                             line_spacing: int,
+                             font_map: Dict[str, str],
+                             preferred_style: str,
+                             allow_pagebreaks: bool = False) -> Tuple[Image.Image, List[int], List[int]]:
+    text = markdown_text or ''
+    width_px = max(content_width_px, 10)
+    faces = resolve_font_faces(font_map, preferred_style or '')
+    pdf_bytes, table_boundaries_pt = build_pdf(text, width_px, dpi, base_font_pt, line_spacing, faces, allow_pagebreaks)
+    image, page_breaks, page_starts_px, page_top_offsets_px = pdf_bytes_to_image(pdf_bytes, dpi, width_px)
+    scale = dpi / 72.0
+    table_boundaries_px: List[int] = []
+    boundary_types: Dict[int, str] = {}
+    for page_index, boundary_top_pt, boundary_type in table_boundaries_pt:
+        if page_index >= len(page_starts_px):
+            continue
+        boundary_px = int(round(boundary_top_pt * scale))
+        top_offset = page_top_offsets_px[page_index] if page_index < len(page_top_offsets_px) else 0
+        adjusted_px = boundary_px - top_offset
+        global_px = page_starts_px[page_index] + max(adjusted_px, 0)
+        table_boundaries_px.append(global_px)
+        boundary_types[global_px] = boundary_type
+    table_boundaries_px.sort()
+    rgb_image = image.convert('RGB')
+    return rgb_image, page_breaks, (table_boundaries_px, boundary_types)
+class TrackingTable(Table):
+    def __init__(self, data, *args, tracker=None, **kwargs):
+        super().__init__(data, *args, **kwargs)
+        self._slice_tracker = tracker
+
+    def drawOn(self, canvas, x, y, _sW=0):
+        if self._slice_tracker is not None and self._rowHeights:
+            page_height = canvas._pagesize[1]
+            page_index = max(0, canvas.getPageNumber() - 1)
+
+            # Record boundaries after each row (measured from the top edge of each row's bottom border)
+            # In PDF: y points to bottom-left of table, increases upward
+            # When we add heights going up from y, we're moving toward the top of the table
+            # But in image space, we want boundaries in top-to-bottom order
+
+            # Total table height
+            total_height = sum(self._rowHeights)
+
+            # Record boundaries starting from the top of the table (in image space)
+            # which is y + total_height in PDF space (at the top of the table)
+            cumulative = total_height
+            for i, height in enumerate(self._rowHeights):
+                # Boundary before this row (at top of row)
+                # In PDF: this is at y + cumulative (measured from bottom)
+                # Convert to "from top of page": page_height - (y + cumulative)
+                boundary_from_top = page_height - (y + cumulative)
+                # Mark first boundary as table start
+                boundary_type = 'table_start' if i == 0 else 'row'
+                self._slice_tracker.append((page_index, boundary_from_top, boundary_type))
+                cumulative -= height
+
+            # Record boundary after last row (at bottom of table)
+            boundary_from_top = page_height - y
+            self._slice_tracker.append((page_index, boundary_from_top, 'table_end'))
+        return super().drawOn(canvas, x, y, _sW=_sW)
                     text_area_top = final_height - bottom_area_px
                     text_area_height = bottom_area_px
                     y = text_area_top + (text_area_height - h) // 2 - bbox[1]

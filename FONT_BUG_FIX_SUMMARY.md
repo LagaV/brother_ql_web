@@ -1,15 +1,15 @@
-# Font Loading Bug Fix - Summary
+# Font Loading Bug Fix - Summary (archived)
 
-## Problem Description
+Next steps already applied:
+1. Backup file app/labeldesigner/routes.py.bak replaced with a DEPRECATED marker — safe to remove.
+2. Debug markdown files archived; consider deleting:
+   - BORDER_DEBUG_GUIDE.md (archive)
+   - BORDER_FIX.md (archive)
+   - BORDER_FIXES_SUMMARY.md (archive)
+   - FIXES_COMPLETE.md (archive)
+3. Commit the changes to git on a cleanup branch and run tests.
 
-The project had a critical bug in the font loading logic in [app/labeldesigner/routes.py](app/labeldesigner/routes.py) that caused incorrect font resolution. The `get_font_info()` function had a variable scope issue.
-
-## Root Cause
-
-In the `get_font_info()` function (lines 1226-1287), there was a loop that iterated through font map candidates:
-
-```python
-for candidate_map in font_map_candidates:
+Note: keep a branch/tag snapshot before deleting files from history.
     if not candidate_map: continue
     # Try exact match for style
     resolved_font_path = candidate_map.get(font_style_name)

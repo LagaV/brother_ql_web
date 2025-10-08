@@ -82,19 +82,15 @@ function formData(cut_once) {
     if (isPdfLoaded) {
         // PDF mode: use page range for printing, pdf_page for preview
         if (typeof dropZoneMode !== 'undefined' && dropZoneMode === 'print') {
-            console.log('[formData] Print mode - PDF page range:', pageFrom, '-', pageTo);
             if (pageFrom && pageTo) {
                 data.page_from = pageFrom;
                 data.page_to = pageTo;
-                console.log('[formData] Sending page_from:', pageFrom, 'page_to:', pageTo);
             } else {
                 data.pdf_page = pdfCurrentPage;
-                console.log('[formData] No range specified, sending pdf_page:', pdfCurrentPage);
             }
         } else {
             // Preview mode - use current page
             data.pdf_page = pdfCurrentPage;
-            console.log('[formData] Preview mode - sending pdf_page:', pdfCurrentPage);
         }
     } else {
         // Markdown mode: use page range if specified
@@ -326,7 +322,6 @@ function toggleBorderContentType(area, type) {
             var isVertical = (area === 'left' || area === 'right');
             areaWidthField.val(isVertical ? '10' : '8');
         }
-        console.log('Set default bar values for ' + area + ': area=' + areaWidthField.val() + 'mm, bar=' + barWidthField.val() + 'mm');
     } else if (type === 'text') {
         textContent.show();
         // Set default area width if currently 0
@@ -335,7 +330,6 @@ function toggleBorderContentType(area, type) {
             var isVertical = (area === 'left' || area === 'right');
             areaWidthField.val(isVertical ? '10' : '8');
         }
-        console.log('Set default text values for ' + area + ': area=' + areaWidthField.val() + 'mm');
     }
     // If 'none', both remain hidden
 }
@@ -823,52 +817,33 @@ function preview(forceRender) {
         $('#groupLabelImage').hide();
         // Hide page range when switching away from image/markdown mode and no PDF/multipage content
         if (!isPdfLoaded) {
-            console.log('[preview] Hiding page range - isPdfLoaded:', isPdfLoaded);
             $('#pageRange').hide();
-        } else {
-            console.log('[preview] Keeping page range visible - isPdfLoaded:', isPdfLoaded);
         }
     }
 
     if (printType === 'image') {
         dropZoneMode = 'preview';
         if (imageDropZone) {
-            console.log('[preview] Image mode - dropzone files:', imageDropZone.files);
-            console.log('[preview] PDF page:', pdfCurrentPage, 'isPdfLoaded:', isPdfLoaded);
-            console.log('[preview] Stored file:', uploadedImageFile ? uploadedImageFile.name : 'none');
-
             // If we have a stored file (for PDF page navigation), send it directly
             if (uploadedImageFile && isPdfLoaded) {
-                console.log('[preview] Sending stored file for page', pdfCurrentPage);
                 var formDataObj = new FormData();
-
-                // Add the image file
                 formDataObj.append('image', uploadedImageFile);
 
                 // Add all other form parameters
                 var fd = formData(false);
-                $.each(fd, function(key, value){
-                    formDataObj.append(key, value);
-                });
+                $.each(fd, function(key, value) { formDataObj.append(key, value); });
 
+                // Send via AJAX (simple example - server expects form-encoded or file)
                 $.ajax({
-                    type: 'POST',
                     url: '{{url_for('.get_preview_from_image')}}?return_format=base64',
+                    type: 'POST',
                     data: formDataObj,
-                    processData: false,
                     contentType: false,
-                    success: function(data) {
-                        handlePreviewResponse(data, false);
-                    },
-                    error: function(xhr) {
-                        console.error('[preview] Error loading PDF page:', xhr);
-                    }
+                    processData: false,
+                    success: function(data) { handlePreviewResponse(data, false); }
                 });
-            } else if (imageDropZone.files && imageDropZone.files.length > 0) {
-                // Normal file upload flow
-                imageDropZone.processQueue();
             } else {
-                console.log('[preview] No files to process');
+                // No stored file to send; preview will proceed via standard flow
             }
         }
         return;
@@ -889,26 +864,20 @@ function preview(forceRender) {
         error: function(xhr) {
             if (isMarkdown) {
                 var msg = xhr && xhr.responseText ? $('<div>').text(xhr.responseText).html() : 'Unknown error';
+                finishMarkdownRenderFeedback('<span class="fas fa-exclamation-triangle" aria-hidden="true"></span> Render Failed');
+                // Reset the render button after a short period
                 if (markdownButtonResetTimer) {
                     clearTimeout(markdownButtonResetTimer);
                 }
-                finishMarkdownRenderFeedback('<span class="fas fa-exclamation-triangle" aria-hidden="true"></span> Render Failed');
                 markdownButtonResetTimer = setTimeout(function() {
-                    var btn = $('#renderMarkdownButton');
-                    if (btn.length && markdownButtonDefaultHtml) {
-                        btn.html(markdownButtonDefaultHtml);
-                    }
+                    finishMarkdownRenderFeedback();
                 }, 4000);
-                console.warn('Markdown preview failed:', msg);
+                console && console.warn && console.warn('Markdown preview failed:', msg);
                 clearMarkdownPreviewState();
             }
         }
     }).always(function() {
         if (isMarkdown && force && markdownRenderInFlight) {
-            if (markdownButtonResetTimer) {
-                clearTimeout(markdownButtonResetTimer);
-                markdownButtonResetTimer = null;
-            }
             finishMarkdownRenderFeedback();
         }
     });
@@ -1677,6 +1646,37 @@ function setPdfPageInfo(currentPage, totalPages) {
     if (!fromInput.val() || fromInput.val() == '') {
         fromInput.attr('max', totalPages).val(1);
     } else {
+        fromInput.attr('max', totalPages);
+    }
+    if (!toInput.val() || toInput.val() == '') {
+        toInput.attr('max', totalPages).val(totalPages);
+    } else {
+        toInput.attr('max', totalPages);
+    }
+
+    $('#pdfPageNavigation').show();
+    $('#pageRange').show();
+    // Force display to ensure it's visible
+    $('#pageRange').css('display', 'block');
+    console.log('[setPdfPageInfo] Showing page range, exists:', $('#pageRange').length, 'visibility:', $('#pageRange').is(':visible'), 'display style:', $('#pageRange').css('display'));
+    console.log('[setPdfPageInfo] Page range parent visible:', $('#pageRange').parent().is(':visible'));
+    console.log('[setPdfPageInfo] Page range offset top:', $('#pageRange').offset() ? $('#pageRange').offset().top : 'null');
+    console.log('[setPdfPageInfo] Page range values - from:', $('#pageFrom').val(), 'to:', $('#pageTo').val());
+    normalizePageRange(totalPages);
+    updatePageButtons();
+}
+
+function goToPdfPage() {
+    var pageNum = parseInt($('#pdfPageInput').val());
+    if (pageNum >= 1 && pageNum <= pdfTotalPages) {
+        pdfCurrentPage = pageNum;
+        updatePageButtons();
+        preview();
+    } else {
+        // Reset to current page if invalid
+        $('#pdfPageInput').val(pdfCurrentPage);
+    }
+}
         fromInput.attr('max', totalPages);
     }
     if (!toInput.val() || toInput.val() == '') {

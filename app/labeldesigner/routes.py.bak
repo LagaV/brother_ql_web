@@ -1,3 +1,8 @@
+# DEPRECATED: This is a backup file created during debugging.
+# It is safe to delete. The active implementation lives in:
+#   /Users/ve/Developer/brother_ql_web/app/labeldesigner/routes.py
+# Keeping this file here only for historical reference; please remove it from the repo.
+
 import os
 import json
 
@@ -1621,12 +1626,7 @@ def create_label_from_context(context, image_file=None):
             # Return early with blank image
         else:
             # Check if it's a multipage PDF
-            name, ext = os.path.splitext(image_file.filename)
-            stretch_length = context.get('image_stretch_length', False)
-
-            if ext.lower() == '.pdf':
-                pdf_pages = get_uploaded_pdf_pages(image_file)
-                if pdf_pages and len(pdf_pages) >= 1:
+            name, ext =
                     # PDF pages are already processed (cropped, rotated, color-converted) by get_uploaded_pdf_pages()
                     # Just use them directly without additional scaling
                     generated_image = pdf_pages[0]  # For preview, show first page
